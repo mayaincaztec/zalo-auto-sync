@@ -145,7 +145,7 @@ class TestConfigManager(unittest.TestCase):
         cfg = ConfigManager(self.config_file)
         self.assertTrue(cfg.update_enabled)
         self.assertEqual(cfg.update_url, "")
-        self.assertEqual(cfg.update_github_repo, "")
+        self.assertEqual(cfg.update_github_repo, "loisude/Zalo-PC-Auto-Sync")
 
     def test_update_properties_set(self):
         cfg = ConfigManager(self.config_file)

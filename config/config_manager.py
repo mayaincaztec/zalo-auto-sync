@@ -29,7 +29,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "speed_limit": 0,
     "update_enabled": True,
     "update_url": "",
-    "update_github_repo": ""
+    "update_github_repo": "loisude/Zalo-PC-Auto-Sync"
 }
 
 
