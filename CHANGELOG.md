@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.6] - 08/2026
+
+### Added - Tab "Thành viên" (Member stats & kick-inactive)
+- **Tab mới "Thành viên"** trong cửa sổ chính: xem danh sách thành viên nhóm Zalo kèm vai trò (admin/owner), lần cuối hoạt động, số tin nhắn và trạng thái.
+- **"Hoạt động cuối"** được suy theo tin nhắn gửi lên nhóm (lần cuối online Zalo không đọc được do chính sách riêng tư).
+- **Loại thành viên bất hoạt**: chọn ngưỡng 7–90 ngày không nhắn, xem trước danh sách và kick có xác nhận. Tự bỏ qua admin/owner. Chỉ admin/owner mới kick được thành công.
+- Lưu snapshot thành viên vào DB (`group_members`, `member_kick_log`); có cột `source_scan` để truy vết dữ liệu.
+
+### Test
+- **361 tests pass**, non-UI coverage **99%**. Thêm test cho member DB (upsert/overview/kick log) và controller (`get_group_id_by_name`, `get_group_members`, `kick_group_members`).
+
 ## [1.1.5] - 08/2026
 
 ### Performance (DB nhanh hơn rất nhiều)
