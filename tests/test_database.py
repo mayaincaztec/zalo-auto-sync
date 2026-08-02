@@ -256,5 +256,77 @@ class TestDatabaseManager(unittest.TestCase):
         migrated.close()
 
 
+class TestMemberTracking(unittest.TestCase):
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.test_dir, "test_members.db")
+        self.db = DatabaseManager(self.db_path)
+
+    def tearDown(self):
+        self.db.close()
+        if os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except OSError:
+                pass
+        try:
+            os.rmdir(self.test_dir)
+        except OSError:
+            pass
+
+    def test_tables_created_on_init(self):
+        conn = self.db.get_connection()
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        self.assertIn("group_members", tables)
+        self.assertIn("member_kick_log", tables)
+
+    def test_upsert_and_get_members(self):
+        members = [
+            {"id": "u1", "name": "An", "isAdmin": False, "isCreator": True, "lastActive": 1000, "msgCount": 5},
+            {"id": "u2", "name": "Binh", "isAdmin": True, "isCreator": False, "lastActive": 900, "msgCount": 2},
+        ]
+        n = self.db.upsert_members("g1", members)
+        self.assertEqual(n, 2)
+        rows = self.db.get_members("g1")
+        self.assertEqual(len(rows), 2)
+        by_id = {r["member_id"]: r for r in rows}
+        self.assertEqual(by_id["u1"]["member_name"], "An")
+        self.assertEqual(by_id["u2"]["is_admin"], 1)
+
+    def test_upsert_clear_missing(self):
+        self.db.upsert_members("g1", [
+            {"id": "u1", "name": "An", "lastActive": 100, "msgCount": 0},
+            {"id": "u2", "name": "Binh", "lastActive": 90, "msgCount": 0},
+        ])
+        self.db.upsert_members("g1", [
+            {"id": "u1", "name": "An", "lastActive": 100, "msgCount": 1},
+        ])
+        rows = self.db.get_members("g1")
+        self.assertEqual([r["member_id"] for r in rows], ["u1"])
+
+    def test_get_member_activity_overview(self):
+        self.db.upsert_members("g1", [
+            {"id": "u1", "name": "An", "isAdmin": False, "isCreator": False, "lastActive": 1000, "msgCount": 3},
+            {"id": "u2", "name": "Binh", "isAdmin": True, "isCreator": False, "lastActive": 500, "msgCount": 1},
+        ])
+        rows = self.db.get_member_activity_overview("g1", cutoff_ts=800)
+        by_id = {r["id"]: r for r in rows}
+        self.assertFalse(by_id["u1"]["inactive"])
+        self.assertTrue(by_id["u2"]["inactive"])
+        self.assertTrue(by_id["u2"]["isAdmin"])
+        self.assertEqual(by_id["u1"]["msgCount"], 3)
+
+    def test_log_kick(self):
+        self.db.log_kick("g1", "u1", "An", reason="inactive", status="kicked")
+        conn = self.db.get_connection()
+        rows = conn.execute(
+            "SELECT * FROM member_kick_log WHERE group_id='g1'").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][5], "inactive")
+        self.assertEqual(rows[0][6], "kicked")
+
+
 if __name__ == "__main__":
     unittest.main()

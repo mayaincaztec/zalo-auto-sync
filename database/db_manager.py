@@ -109,6 +109,139 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_group ON download_history(group_name);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON download_history(status);")
             conn.commit()
+        self.init_member_tracking()
+
+    def init_member_tracking(self) -> None:
+        """Creates the tables used to store group member info and activity snapshots."""
+        with self._lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    member_name TEXT,
+                    is_admin INTEGER DEFAULT 0,
+                    is_creator INTEGER DEFAULT 0,
+                    last_active_ts INTEGER DEFAULT 0,
+                    msg_count INTEGER DEFAULT 0,
+                    source_scan INTEGER DEFAULT 0
+                )
+            """)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_member_group
+                ON group_members(group_id, member_id)
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS member_kick_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT,
+                    member_id TEXT,
+                    member_name TEXT,
+                    kicked_time INTEGER,
+                    reason TEXT,
+                    status TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_kick_group ON member_kick_log(group_id);")
+            conn.commit()
+
+    def upsert_members(self, group_id: str, members: List[Dict[str, Any]],
+                       clear_missing: bool = True) -> int:
+        """Stores a snapshot of members alongside their last-active info.
+
+        Each member row is upserted on (group_id, member_id). When
+        clear_missing is True, members no longer present in the snapshot are
+        removed so the table mirrors the group's current roster.
+        Returns the number of rows upserted.
+        """
+        if not group_id or not members:
+            return 0
+        with self._lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            now = int(datetime.now().timestamp())
+            seen: List[str] = []
+            for m in members:
+                mid = str(m.get("id") or "")
+                if not mid:
+                    continue
+                seen.append(mid)
+                cursor.execute("""
+                    INSERT INTO group_members
+                        (group_id, member_id, member_name, is_admin, is_creator, last_active_ts, msg_count, source_scan)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(group_id, member_id) DO UPDATE SET
+                        member_name = excluded.member_name,
+                        is_admin = excluded.is_admin,
+                        is_creator = excluded.is_creator,
+                        last_active_ts = excluded.last_active_ts,
+                        msg_count = excluded.msg_count,
+                        source_scan = excluded.source_scan
+                """, (
+                    group_id,
+                    mid,
+                    str(m.get("name") or ""),
+                    1 if m.get("isAdmin") else 0,
+                    1 if m.get("isCreator") else 0,
+                    int(m.get("lastActive") or 0),
+                    int(m.get("msgCount") or 0),
+                    now,
+                ))
+            if clear_missing:
+                if seen:
+                    placeholders = ",".join("?" * len(seen))
+                    cursor.execute(
+                        f"DELETE FROM group_members WHERE group_id = ? AND member_id NOT IN ({placeholders})",
+                        [group_id] + seen
+                    )
+                else:
+                    cursor.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
+            conn.commit()
+            return len(seen)
+
+    def get_members(self, group_id: str) -> List[Dict[str, Any]]:
+        """Returns all stored members of a group, sorted by last activity."""
+        with self._lock:
+            conn = self.get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT member_id, member_name, is_admin, is_creator, last_active_ts, msg_count
+                FROM group_members
+                WHERE group_id = ?
+                ORDER BY last_active_ts DESC
+            """, (group_id,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_member_activity_overview(self, group_id: str, cutoff_ts: int) -> List[Dict[str, Any]]:
+        """Summarizes stored members: who has not been active since cutoff_ts."""
+        members = self.get_members(group_id)
+        return [
+            {
+                "id": m["member_id"],
+                "name": m["member_name"],
+                "isAdmin": bool(m["is_admin"]),
+                "isCreator": bool(m["is_creator"]),
+                "lastActive": m["last_active_ts"],
+                "msgCount": m["msg_count"],
+                "inactive": m["last_active_ts"] < cutoff_ts,
+            }
+            for m in members
+        ]
+
+    def log_kick(self, group_id: str, member_id: str, member_name: str,
+                 reason: str = "", status: str = "") -> None:
+        """Records a kick attempt/result into member_kick_log."""
+        with self._lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO member_kick_log (group_id, member_id, member_name, kicked_time, reason, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (group_id, member_id, member_name, int(datetime.now().timestamp()), reason, status))
+            conn.commit()
 
     def add_item(self, item: DownloadItem) -> int:
         """Adds a new file item to download history."""

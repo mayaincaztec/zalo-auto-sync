@@ -1236,6 +1236,70 @@ class TestZaloController(unittest.TestCase):
             ctrl.__del__()
         mock_stop.assert_called_once()
 
+    def test_get_group_id_by_name_cached(self):
+        ctrl = ZaloController()
+        ctrl._group_name_to_id["Alpha"] = "gid-cached"
+        self.assertEqual(ctrl.get_group_id_by_name("Alpha"), "gid-cached")
+
+    def test_get_group_id_by_name_not_connected(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = False
+        with patch.object(ctrl, "ensure_zalo_running", return_value=False):
+            self.assertIsNone(ctrl.get_group_id_by_name("Alpha"))
+
+    def test_get_group_id_by_name_from_bridge(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        with patch.object(ctrl, "_send_command", return_value={
+            "status": "ok", "data": {"groupId": "gid-1"}
+        }) as mock_send:
+            self.assertEqual(ctrl.get_group_id_by_name("Alpha"), "gid-1")
+            self.assertEqual(ctrl._group_name_to_id["Alpha"], "gid-1")
+            mock_send.assert_called_once()
+
+    def test_get_group_id_by_name_bridge_fail(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        with patch.object(ctrl, "_send_command", return_value={"status": "error"}):
+            self.assertIsNone(ctrl.get_group_id_by_name("Alpha"))
+
+    def test_get_group_members_ok(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        payload = {"status": "ok", "data": {"members": [{"id": "u1", "name": "An"}]}}
+        with patch.object(ctrl, "_send_command", return_value=payload) as mock_send:
+            out = ctrl.get_group_members("g1", 100)
+        self.assertEqual(out, [{"id": "u1", "name": "An"}])
+        mock_send.assert_called_once_with("get_members", {"groupId": "g1", "count": 100}, timeout=120)
+
+    def test_get_group_members_fail(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        with patch.object(ctrl, "_send_command", return_value=None):
+            self.assertEqual(ctrl.get_group_members("g1"), [])
+
+    def test_kick_group_members_ok(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        with patch.object(ctrl, "_send_command", return_value={
+            "status": "ok", "data": {"errorMembers": []}}) as mock_send:
+            self.assertEqual(ctrl.kick_group_members("g1", ["u1", "u2"]), [])
+        mock_send.assert_called_once_with(
+            "kick_members", {"groupId": "g1", "memberIds": ["u1", "u2"]}, timeout=60)
+
+    def test_kick_group_members_partial(self):
+        ctrl = ZaloController()
+        ctrl.is_connected = True
+        with patch.object(ctrl, "_send_command", return_value={
+            "status": "ok", "data": {"errorMembers": ["u2"]}}):
+            self.assertEqual(ctrl.kick_group_members("g1", ["u1", "u2"]), ["u2"])
+
+    def test_kick_group_members_no_ids(self):
+        ctrl = ZaloController()
+        with patch.object(ctrl, "ensure_zalo_running") as mock_ensure:
+            self.assertEqual(ctrl.kick_group_members("g1", []), [])
+        mock_ensure.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

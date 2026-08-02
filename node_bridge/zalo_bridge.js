@@ -386,6 +386,75 @@ async function dispatch(id, command, data) {
       }
       break;
     }
+    case 'get_members': {
+      if (!api) { respond(id, 'get_members', 'error', { message: 'Not logged in' }); break; }
+      const groupId = data.groupId;
+      if (!groupId) { respond(id, 'get_members', 'error', { message: 'No groupId' }); break; }
+      try {
+        const infoRes = await api.getGroupInfo(groupId);
+        const grid = (infoRes && infoRes.gridInfoMap) || {};
+        const info = grid[groupId] || {};
+        const allIds = info.memberIds || [];
+        const adminIds = info.adminIds || [];
+        const creatorId = info.creatorId || '';
+
+        const nameMap = {};
+        for (const m of (info.currentMems || [])) {
+          nameMap[m.id] = m.dName || m.zaloName || '';
+        }
+
+        const lastTs = {};
+        const msgCount = {};
+        const histCount = data.count || 2000;
+        try {
+          const hist = await api.getGroupChatHistory(groupId, histCount);
+          for (const msg of (hist && hist.groupMsgs) || []) {
+            const d = msg && msg.data;
+            if (!d || !d.uidFrom) continue;
+            const uid = d.uidFrom;
+            const ts = parseInt(d.ts) || 0;
+            if (!lastTs[uid] || ts > lastTs[uid]) lastTs[uid] = ts;
+            msgCount[uid] = (msgCount[uid] || 0) + 1;
+          }
+        } catch (histErr) {
+          log(`get_members history error: ${histErr.message}`);
+        }
+
+        const members = allIds.map(uid => ({
+          id: uid,
+          name: nameMap[uid] || '',
+          isAdmin: adminIds.includes(uid) || uid === creatorId,
+          isCreator: uid === creatorId,
+          lastActive: lastTs[uid] || 0,
+          msgCount: msgCount[uid] || 0
+        }));
+
+        respond(id, 'get_members', 'ok', {
+          groupId,
+          groupName: info.name || '',
+          totalMember: members.length,
+          members
+        });
+      } catch (err) {
+        respond(id, 'get_members', 'error', { message: err.message });
+      }
+      break;
+    }
+    case 'kick_members': {
+      if (!api) { respond(id, 'kick_members', 'error', { message: 'Not logged in' }); break; }
+      const groupId = data.groupId;
+      const memberIds = (data.memberIds || []).filter(Boolean);
+      if (!groupId || memberIds.length === 0) {
+        respond(id, 'kick_members', 'error', { message: 'No groupId or memberIds' }); break;
+      }
+      try {
+        const res = await api.removeUserFromGroup(memberIds, groupId);
+        respond(id, 'kick_members', 'ok', { errorMembers: (res && res.errorMembers) || [] });
+      } catch (err) {
+        respond(id, 'kick_members', 'error', { message: err.message });
+      }
+      break;
+    }
     case 'download': {
       const { url, destination } = data;
       if (!url) { respond(id, 'download', 'error', { message: 'No URL' }); break; }

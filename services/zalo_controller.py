@@ -458,6 +458,46 @@ class ZaloController:
         self.log("INFO", f"[Group] Found: '{group_name}' (ID: {gid})")
         return True
 
+    def get_group_id_by_name(self, group_name: str) -> Optional[str]:
+        """Resolves a group name to its Zalo group ID, without switching active group."""
+        if self._group_name_to_id.get(group_name):
+            return self._group_name_to_id[group_name]
+        if not self.is_connected and not self.ensure_zalo_running():
+            return None
+        resp = self._send_command("find_group", {"name": group_name}, timeout=120)
+        if not resp or resp.get("status") != "ok":
+            return None
+        gid = resp.get("data", {}).get("groupId")
+        if gid:
+            self._group_name_to_id[group_name] = gid
+        return gid or None
+
+    def get_group_members(self, group_id: str, count: int = 2000) -> List[Dict[str, Any]]:
+        """Fetches a group's member roster + last-active stats from the bridge."""
+        if not self.is_connected and not self.ensure_zalo_running():
+            return []
+        self.log("INFO", f"[Members] Fetching member stats for group {group_id}...")
+        resp = self._send_command("get_members", {"groupId": group_id, "count": count}, timeout=120)
+        if not resp or resp.get("status") != "ok":
+            self.log("ERROR", f"[Members] Failed to fetch: {resp}")
+            return []
+        return (resp.get("data") or {}).get("members", [])
+
+    def kick_group_members(self, group_id: str, member_ids: List[str]) -> List[str]:
+        """Kicks members from a group. Returns the members Zalo could not remove."""
+        if not member_ids:
+            return []
+        if not self.is_connected and not self.ensure_zalo_running():
+            return member_ids
+        self.log("INFO", f"[Members] Kicking {len(member_ids)} member(s) from {group_id}...")
+        resp = self._send_command(
+            "kick_members", {"groupId": group_id, "memberIds": member_ids}, timeout=60
+        )
+        if not resp or resp.get("status") != "ok":
+            self.log("ERROR", f"[Members] Kick failed: {resp}")
+            return member_ids
+        return (resp.get("data") or {}).get("errorMembers", []) or []
+
     def scan_group_files(self, group_name: str) -> List[GroupFile]:
         if self.active_group != group_name:
             if not self.open_group(group_name):

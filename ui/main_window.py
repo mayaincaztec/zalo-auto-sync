@@ -34,6 +34,7 @@ from zalo_drive_sync.services.zalo_controller import ZaloController
 from zalo_drive_sync.ui.i18n import _TR as _
 from zalo_drive_sync.ui.guide_widget import GuideWidget
 from zalo_drive_sync.ui.log_widget import LogWidget
+from zalo_drive_sync.ui.member_widget import MemberWidget
 from zalo_drive_sync.ui.queue_widget import QueueWidget
 from zalo_drive_sync.ui.settings_dialog import SettingsWidget
 from zalo_drive_sync.ui.styles import get_stylesheet
@@ -238,6 +239,10 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
         self.tabs.addTab(settings_scroll, _["tab_settings"])
         self.guide_widget = GuideWidget()
         self.tabs.addTab(self.guide_widget, _["tab_guide"])
+
+        self.member_widget = MemberWidget(
+            self.config_manager, self.db_manager, zalo_controller=self.zalo_controller)
+        self.tabs.addTab(self.member_widget, _["tab_members"])
 
         main_layout.addWidget(self.tabs)
 
