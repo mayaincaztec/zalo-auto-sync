@@ -1,0 +1,49 @@
+# ============ LOCAL DEVELOPMENT (internal AI-assistant context) ============
+.ai/
+
+# ============ SECRETS & USER DATA (never commit) ============
+credentials.json
+token.json
+config.json
+database.db
+database.db-journal
+database.db-wal
+database.db-shm
+node_bridge/cookie.json
+node_bridge/qr.png
+
+# ============ PYTHON ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+*.log
+logs/
+
+# ============ NODE ============
+node_bridge/node_modules/
+
+# ============ BUILD ARTIFACTS ============
+build/
+build_out/
+dist/
+releases/
+*.spec.bak
+
+# ============ LOCAL ZIPS ============
+*.zip
+
+# ============ DIAGNOSTIC PROBE SCRIPTS (internal only) ============
+node_bridge/probe_*.js
+node_bridge/probe_*_out.txt
+node_bridge/test_qr_full.js
+
+# ============ OS ============
+Thumbs.db
+Desktop.ini
+.DS_Store

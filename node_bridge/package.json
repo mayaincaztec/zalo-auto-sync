@@ -1,0 +1,8 @@
+{
+  "name": "zalo-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "zca-js": "^2.1.2"
+  }
+}

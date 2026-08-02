@@ -1,0 +1,8 @@
+[run]
+branch = True
+omit =
+    */ui/*
+    */utils/*
+    */tests/*
+    */main.py
+    */__init__.py
