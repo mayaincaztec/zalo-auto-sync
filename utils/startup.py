@@ -15,7 +15,8 @@ except ImportError:
 
 
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_NAME = "ZaloPCSyncDrive"
+APP_NAME = "ZaloPCAutoDownload"
+LEGACY_APP_NAMES = ("ZaloPCSyncDrive",)
 
 
 def set_auto_start(enable: bool = True, exe_path: str = None) -> bool:
@@ -38,11 +39,17 @@ def set_auto_start(enable: bool = True, exe_path: str = None) -> bool:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_ALL_ACCESS)
         if enable:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}" --minimized')
+            for legacy_name in LEGACY_APP_NAMES:
+                try:
+                    winreg.DeleteValue(key, legacy_name)
+                except FileNotFoundError:
+                    pass
         else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
+            for app_name in (APP_NAME, *LEGACY_APP_NAMES):
+                try:
+                    winreg.DeleteValue(key, app_name)
+                except FileNotFoundError:
+                    pass
         winreg.CloseKey(key)
         return True
     except Exception:
@@ -56,12 +63,14 @@ def is_auto_start_enabled() -> bool:
 
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        try:
-            val, _ = winreg.QueryValueEx(key, APP_NAME)
-            winreg.CloseKey(key)
-            return bool(val)
-        except FileNotFoundError:
-            winreg.CloseKey(key)
-            return False
+        for app_name in (APP_NAME, *LEGACY_APP_NAMES):
+            try:
+                val, _ = winreg.QueryValueEx(key, app_name)
+                winreg.CloseKey(key)
+                return bool(val)
+            except FileNotFoundError:
+                continue
+        winreg.CloseKey(key)
+        return False
     except Exception:
         return False

@@ -20,7 +20,11 @@ class SyncStatus(str, Enum):
 
 @dataclass
 class DownloadItem:
-    """Represents a file item tracked in download and upload history."""
+    """Represents a file item tracked in local download history.
+
+    Drive-related fields remain for backward compatibility with existing
+    SQLite databases created by releases before local-only mode.
+    """
 
     id: Optional[int] = None
     filename: str = ""
@@ -30,7 +34,7 @@ class DownloadItem:
     message_id: str = ""
     file_id: str = ""
     download_status: str = "pending"  # "pending", "downloading", "downloaded", "failed"
-    drive_status: str = "pending"     # "pending", "queued", "uploading", "completed", "failed", "skipped"
+    drive_status: str = "not_required"  # Legacy column; no cloud upload in local-only mode
     created_time: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     uploaded_time: Optional[str] = None
     last_scan: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

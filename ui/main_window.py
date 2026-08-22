@@ -29,7 +29,6 @@ from zalo_drive_sync.config.config_manager import ConfigManager
 from zalo_drive_sync.core.sync_engine import ZaloGroupSyncEngine
 from zalo_drive_sync.database.db_manager import DatabaseManager
 from zalo_drive_sync.database.models import DownloadItem, SyncStatus
-from zalo_drive_sync.services.gdrive_service import GoogleDriveService
 from zalo_drive_sync.services.zalo_controller import ZaloController
 from zalo_drive_sync.ui.i18n import _TR as _
 from zalo_drive_sync.ui.guide_widget import GuideWidget
@@ -44,7 +43,7 @@ _TRAY_NOTIFY_DEBOUNCE_S = 5.0
 
 
 class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
-    """Main Application Window for Zalo PC Sync & Google Drive Manager."""
+    """Main window for downloading Zalo group files to a local folder."""
 
     # Custom Qt Signals for thread safety
     log_signal = Signal(str, str) if PYSIDE_AVAILABLE else None
@@ -57,7 +56,6 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
         self,
         config_manager: ConfigManager,
         db_manager: DatabaseManager,
-        gdrive_service: GoogleDriveService
     ):
         if not PYSIDE_AVAILABLE:
             return
@@ -65,7 +63,6 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
 
         self.config_manager = config_manager
         self.db_manager = db_manager
-        self.gdrive_service = gdrive_service
 
         self.is_syncing = False
         self.sync_engine: Optional[ZaloGroupSyncEngine] = None
@@ -300,7 +297,7 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
         """Updates dashboard counter card labels from database."""
         stats = self.db_manager.get_stats()
         self.card_total["val_label"].setText(f"{stats['total_files']} " + _["dash_files"])
-        self.card_uploaded["val_label"].setText(f"{stats['uploaded_files']} " + _["dash_files"])
+        self.card_uploaded["val_label"].setText(f"{stats['downloaded_files']} " + _["dash_files"])
         self.card_errors["val_label"].setText(f"{stats['error_files']} " + _["dash_files"])
 
         mb = stats['total_bytes'] / (1024 * 1024)
@@ -417,11 +414,11 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
             self.start_sync()
 
     def start_sync(self):
-        gdrive_id = self.config_manager.gdrive_folder_id
         group_name = self.config_manager.group_name
+        download_folder = self.config_manager.download_folder
 
-        if not gdrive_id:
-            QMessageBox.warning(self, _["missing_gdrive_title"], _["missing_gdrive_msg"])
+        if not download_folder:
+            QMessageBox.warning(self, _["missing_folder_title"], _["missing_folder_msg"])
             self.tabs.setCurrentIndex(1)
             return
 
@@ -437,7 +434,6 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
         self.sync_engine = ZaloGroupSyncEngine(
             config_manager=self.config_manager,
             db_manager=self.db_manager,
-            gdrive_service=self.gdrive_service,
             log_callback=self.emit_log,
             item_callback=self.on_queue_status_update,
             qrcode_callback=self._on_qr_ready,

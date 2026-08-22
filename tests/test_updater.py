@@ -85,7 +85,7 @@ class TestFeedCheck(unittest.TestCase):
             "body": "Release body",
             "assets": [
                 {"name": "other.zip", "browser_download_url": "http://x/other.zip"},
-                {"name": "ZaloPCSyncDrive-v1.2.0.zip", "browser_download_url": "http://x/app.zip"},
+                {"name": "ZaloPCAutoDownload-v1.2.0.zip", "browser_download_url": "http://x/app.zip"},
             ],
         }
         with patch.object(updater, "_http_get_json", return_value=payload):
@@ -162,7 +162,7 @@ class TestStageAndScript(unittest.TestCase):
     def _make_zip(self, with_node=True):
         import zipfile
         with zipfile.ZipFile(self.zip_path, "w") as zf:
-            zf.writestr("ZaloPCSyncDrive.exe", b"exe")
+            zf.writestr("ZaloPCAutoDownload.exe", b"exe")
             if with_node:
                 zf.writestr("node_bridge/zalo_bridge.js", b"js")
         return self.zip_path
@@ -170,7 +170,7 @@ class TestStageAndScript(unittest.TestCase):
     def test_stage_update_extracts_zip(self):
         self._make_zip()
         self.assertTrue(updater.stage_update(self.zip_path, self.staging))
-        self.assertTrue(os.path.exists(os.path.join(self.staging, "ZaloPCSyncDrive.exe")))
+        self.assertTrue(os.path.exists(os.path.join(self.staging, "ZaloPCAutoDownload.exe")))
         self.assertTrue(os.path.exists(os.path.join(self.staging, "node_bridge", "zalo_bridge.js")))
 
     def test_stage_update_failure_on_bad_zip(self):
@@ -183,7 +183,7 @@ class TestStageAndScript(unittest.TestCase):
         updater.stage_update(self.zip_path, self.staging)
         found = updater.find_executable(self.staging)
         self.assertTrue(found)
-        self.assertTrue(found.lower().endswith("zalopcsyncdrive.exe"))
+        self.assertTrue(found.lower().endswith("zalopcautodownload.exe"))
 
     def test_find_executable_none_when_missing(self):
         self.assertIsNone(updater.find_executable(self.staging))
@@ -196,7 +196,7 @@ class TestStageAndScript(unittest.TestCase):
         self.assertTrue(updater.create_update_script(self.staging, app_dir, script))
         content = open(script, "r", encoding="utf-8").read()
         self.assertIn("copy /y", content)
-        self.assertIn("ZaloPCSyncDrive.exe", content)
+        self.assertIn("ZaloPCAutoDownload.exe", content)
         self.assertIn("robocopy", content)
         self.assertIn("rmdir /s /q", content)
         self.assertIn("start", content)
@@ -214,7 +214,7 @@ class TestApplyUpdate(unittest.TestCase):
             import zipfile
             zip_path = os.path.join(tmpdir, "update.zip")
             with zipfile.ZipFile(zip_path, "w") as zf:
-                zf.writestr("ZaloPCSyncDrive.exe", b"exe")
+                zf.writestr("ZaloPCAutoDownload.exe", b"exe")
             app_dir = os.path.join(tmpdir, "app")
             os.makedirs(app_dir)
 

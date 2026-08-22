@@ -58,11 +58,11 @@ class TestDatabaseManager(unittest.TestCase):
         item_id = self.db.add_item(item)
 
         self.db.update_status(item_id, SyncStatus.COMPLETED, drive_file_id="drive_file_99")
-        self.assertTrue(self.db.is_file_uploaded("hash_12345"))
+        self.assertTrue(self.db.is_file_downloaded("hash_12345"))
         self.assertTrue(self.db.is_file_processed("zf_001", "Team Alpha"))
 
         stats = self.db.get_stats()
-        self.assertEqual(stats["uploaded_files"], 1)
+        self.assertEqual(stats["downloaded_files"], 1)
         self.assertEqual(stats["total_bytes"], 500000)
 
     def test_get_processed_file_ids_batch(self):

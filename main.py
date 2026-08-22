@@ -7,7 +7,7 @@ if getattr(sys, 'frozen', False):
     PROJECT_ROOT = os.path.dirname(sys.executable)
     _MEI = getattr(sys, '_MEIPASS', None)
     if _MEI:
-        for _name in ('config.json', 'credentials.json', 'node_bridge'):
+        for _name in ('config.json', 'node_bridge'):
             _src = os.path.join(_MEI, _name)
             _dst = os.path.join(PROJECT_ROOT, _name)
             if not os.path.exists(_src):
@@ -45,11 +45,10 @@ try:
 except ImportError:
     PYSIDE_AVAILABLE = False
 
-APP_SINGLE_INSTANCE_KEY = "ZaloPCSyncDrive_SingleInstance"
+APP_SINGLE_INSTANCE_KEY = "ZaloPCAutoDownload_SingleInstance"
 
 from zalo_drive_sync.config.config_manager import ConfigManager
 from zalo_drive_sync.database.db_manager import DatabaseManager
-from zalo_drive_sync.services.gdrive_service import GoogleDriveService
 from zalo_drive_sync.ui.i18n import _TR as _
 from zalo_drive_sync.ui.main_window import MainWindow
 from zalo_drive_sync.utils.logger import setup_logger
@@ -100,18 +99,14 @@ def main():
     db_path = os.path.join(PROJECT_ROOT, "database.db")
     db_manager = DatabaseManager(db_path)
 
-    creds_path = os.path.join(PROJECT_ROOT, config_manager.get("credentials_file", "credentials.json"))
-    token_path = os.path.join(PROJECT_ROOT, config_manager.get("token_file", "token.json"))
-    gdrive_service = GoogleDriveService(credentials_file=creds_path, token_file=token_path)
-
     if PYSIDE_AVAILABLE:
         app = QApplication(sys.argv)
-        app.setApplicationName("ZaloPCSyncDrive")
+        app.setApplicationName("ZaloPCAutoDownload")
         app.setOrganizationName("ZaloSync")
         app.setQuitOnLastWindowClosed(False)
         _app_icon = QIcon(resources.icon_ico_path())
         app.setWindowIcon(_app_icon)
-        app.setDesktopFileName("ZaloPCSyncDrive")
+        app.setDesktopFileName("ZaloPCAutoDownload")
 
         single_instance = QSharedMemory(APP_SINGLE_INSTANCE_KEY)
         if single_instance.attach():
@@ -138,7 +133,6 @@ def main():
         main_window = MainWindow(
             config_manager=config_manager,
             db_manager=db_manager,
-            gdrive_service=gdrive_service
         )
 
         log_dir = os.path.join(PROJECT_ROOT, "logs")

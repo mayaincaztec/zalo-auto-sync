@@ -37,15 +37,15 @@ class TestConfigManager(unittest.TestCase):
 
     def test_config_set_and_get(self):
         cfg = ConfigManager(self.config_file)
-        cfg.set("gdrive_folder_id", "test_folder_123")
+        cfg.set("download_folder", "C:/SharePoint/Zalo")
         cfg.set("group_name", "Kế Toán Company")
-        self.assertEqual(cfg.gdrive_folder_id, "test_folder_123")
+        self.assertEqual(cfg.download_folder, "C:/SharePoint/Zalo")
         self.assertEqual(cfg.group_name, "Kế Toán Company")
 
         # Reload from disk
         cfg2 = ConfigManager(self.config_file)
         cfg2.load()
-        self.assertEqual(cfg2.gdrive_folder_id, "test_folder_123")
+        self.assertEqual(cfg2.download_folder, "C:/SharePoint/Zalo")
         self.assertEqual(cfg2.group_name, "Kế Toán Company")
 
     def test_singleton_returns_same_instance(self):
@@ -56,10 +56,10 @@ class TestConfigManager(unittest.TestCase):
     def test_singleton_initialized_once(self):
         ConfigManager._instance = None
         cfg1 = ConfigManager(self.config_file)
-        cfg1.set("gdrive_folder_id", "abc")
+        cfg1.set("download_folder", "C:/A")
         cfg2 = ConfigManager(self.config_file)
-        cfg2.set("gdrive_folder_id", "xyz")
-        self.assertEqual(cfg1.gdrive_folder_id, "xyz")  # same object
+        cfg2.set("download_folder", "C:/B")
+        self.assertEqual(cfg1.download_folder, "C:/B")  # same object
 
     def test_group_names_single(self):
         cfg = ConfigManager(self.config_file)
@@ -86,7 +86,6 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(cfg.thread_number, 2)
         self.assertEqual(cfg.interval, 5)  # alias for check_interval
         self.assertEqual(cfg.extensions, [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".zip", ".rar", ".mp4", ".txt"])
-        self.assertEqual(cfg.gdrive_folder_id, "")
         self.assertEqual(cfg.group_name, "Team Alpha Workgroup")
         self.assertEqual(cfg.max_retry, 3)
 
@@ -143,9 +142,9 @@ class TestConfigManager(unittest.TestCase):
 
     def test_update_properties_defaults(self):
         cfg = ConfigManager(self.config_file)
-        self.assertTrue(cfg.update_enabled)
+        self.assertFalse(cfg.update_enabled)
         self.assertEqual(cfg.update_url, "")
-        self.assertEqual(cfg.update_github_repo, "loisude/Zalo-PC-Auto-Sync")
+        self.assertEqual(cfg.update_github_repo, "mayaincaztec/zalo-auto-sync")
 
     def test_update_properties_set(self):
         cfg = ConfigManager(self.config_file)

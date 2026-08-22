@@ -1,44 +1,74 @@
 """
-Zalo Group Sync Engine
-Orchestrates the workflow:
+Zalo Group local download engine.
+
+Workflow:
 Open Zalo -> Open Group -> Scan Group Files -> Identify New Files via SQLite ->
-Download File -> Wait & Verify Download -> Enqueue Upload to Drive -> Update SQLite History.
+Download directly to the configured local folder -> Update SQLite history.
+
+The destination may be a OneDrive/SharePoint-synced folder. Cloud replication
+is intentionally delegated to the OneDrive desktop client.
 """
 
-import os
-import time
-import threading
 import logging
-from typing import Callable, List, Optional
+import os
+import threading
+import time
 from datetime import datetime
+from typing import Callable, List, Optional
 
 from zalo_drive_sync.config.config_manager import ConfigManager
 from zalo_drive_sync.core.hasher import calculate_sha256
-from zalo_drive_sync.core.upload_queue import UploadQueueManager
 from zalo_drive_sync.database.db_manager import DatabaseManager
 from zalo_drive_sync.database.models import DownloadItem, SyncStatus
-from zalo_drive_sync.services.gdrive_service import GoogleDriveService
 from zalo_drive_sync.services.zalo_controller import GroupFile, ZaloController
 
 logger = logging.getLogger("ZaloPCSync")
 
 
+def resolve_local_destination(
+    download_folder: str,
+    filename: str,
+    duplicate_action: str = "rename",
+) -> Optional[str]:
+    """Returns a safe destination path for a Zalo attachment.
+
+    ``rename`` creates ``name (1).ext`` without overwriting an existing file,
+    ``overwrite`` reuses the existing path, and ``skip`` returns ``None``.
+    """
+    folder = os.path.abspath(download_folder)
+    os.makedirs(folder, exist_ok=True)
+
+    safe_name = os.path.basename((filename or "").strip()) or "zalo_file"
+    destination = os.path.join(folder, safe_name)
+
+    if not os.path.exists(destination) or duplicate_action == "overwrite":
+        return destination
+    if duplicate_action == "skip":
+        return None
+
+    stem, extension = os.path.splitext(safe_name)
+    counter = 1
+    while True:
+        candidate = os.path.join(folder, f"{stem} ({counter}){extension}")
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
+
+
 class ZaloGroupSyncEngine:
-    """Main execution engine for scanning Zalo Group files and uploading to Drive."""
+    """Scans one Zalo group and downloads new files to a local folder."""
 
     def __init__(
         self,
         config_manager: ConfigManager,
         db_manager: DatabaseManager,
-        gdrive_service: GoogleDriveService,
         log_callback: Optional[Callable[[str, str], None]] = None,
         item_callback: Optional[Callable[[DownloadItem, str, int], None]] = None,
         qrcode_callback: Optional[Callable[[str], None]] = None,
-        zalo_controller: Optional[ZaloController] = None
+        zalo_controller: Optional[ZaloController] = None,
     ):
         self.config_manager = config_manager
         self.db_manager = db_manager
-        self.gdrive_service = gdrive_service
         self.log_callback = log_callback
         self.item_callback = item_callback
 
@@ -46,15 +76,11 @@ class ZaloGroupSyncEngine:
         if zalo_controller is not None:
             self.zalo_controller = zalo_controller
         else:
-            self.zalo_controller = ZaloController(log_callback=self.log, qrcode_callback=qrcode_callback, config_manager=config_manager)
-        self.upload_queue = UploadQueueManager(
-            db_manager=self.db_manager,
-            gdrive_service=self.gdrive_service,
-            max_workers=self.config_manager.thread_number,
-            max_retries=self.config_manager.max_retry,
-            status_callback=self.on_queue_status_update,
-            log_callback=self.log
-        )
+            self.zalo_controller = ZaloController(
+                log_callback=self.log,
+                qrcode_callback=qrcode_callback,
+                config_manager=config_manager,
+            )
 
         self.is_running = False
         self._thread: Optional[threading.Thread] = None
@@ -65,39 +91,41 @@ class ZaloGroupSyncEngine:
         if self.log_callback:
             self.log_callback(level, message)
 
-    def on_queue_status_update(self, item: DownloadItem, status_text: str, progress_percent: int):
+    def on_item_status_update(
+        self, item: DownloadItem, status_text: str, progress_percent: int
+    ):
         if self.item_callback:
             self.item_callback(item, status_text, progress_percent)
 
+    # Compatibility alias for older callers.
+    def on_queue_status_update(
+        self, item: DownloadItem, status_text: str, progress_percent: int
+    ):
+        self.on_item_status_update(item, status_text, progress_percent)
+
     def start(self):
-        """Starts the sync loop thread and upload workers."""
+        """Starts the local download loop in a background thread."""
         if self.is_running:
             return
 
         self.is_running = True
         self._stop_event.clear()
-
-        # Start upload workers
-        self.upload_queue.start()
-
-        # Launch background loop thread
-        self._thread = threading.Thread(target=self._sync_loop, daemon=True, name="ZaloGroupSyncLoop")
+        self._thread = threading.Thread(
+            target=self._sync_loop,
+            daemon=True,
+            name="ZaloGroupDownloadLoop",
+        )
         self._thread.start()
-        self.log("INFO", "[Sync Engine] Started Zalo PC Group scanner background engine.")
+        self.log("INFO", "[Download Engine] Started Zalo group scanner.")
 
     def stop(self):
-        """Stops the sync engine cleanly."""
+        """Stops the engine cleanly."""
         if not self.is_running:
             return
 
         self.is_running = False
         self._stop_event.set()
 
-        if self.upload_queue:
-            self.upload_queue.stop()
-
-        # Abort any in-flight bridge command so the loop thread exits quickly
-        # instead of waiting for a long timeout (e.g. find_group 120s).
         try:
             if self.zalo_controller:
                 if self._owns_controller:
@@ -116,7 +144,7 @@ class ZaloGroupSyncEngine:
         except Exception:
             pass
 
-        self.log("INFO", "[Sync Engine] Stopped Zalo Group Sync Engine.")
+        self.log("INFO", "[Download Engine] Stopped Zalo group scanner.")
 
     def _in_schedule_window(self) -> bool:
         if not self.config_manager.schedule_enabled:
@@ -132,13 +160,12 @@ class ZaloGroupSyncEngine:
             end_minutes = end_h * 60 + end_m
             if start_minutes <= end_minutes:
                 return start_minutes <= current_minutes <= end_minutes
-            else:
-                return current_minutes >= start_minutes or current_minutes <= end_minutes
+            return current_minutes >= start_minutes or current_minutes <= end_minutes
         except Exception:
             return True
 
     def run_single_scan(self):
-        """Executes one scan cycle: Open Zalo -> Open Group -> Scan Files -> Download & Enqueue Upload."""
+        """Runs one Zalo scan and downloads new files locally."""
         if not self._in_schedule_window():
             self.log("DEBUG", "[Schedule] Outside scheduled window, skipping scan.")
             return
@@ -146,29 +173,79 @@ class ZaloGroupSyncEngine:
         group_name = self.config_manager.group_name
         download_folder = self.config_manager.download_folder
         download_timeout = self.config_manager.download_timeout
-        gdrive_folder_id = self.config_manager.gdrive_folder_id
 
         if not group_name:
             self.log("ERROR", "[Config] No Zalo group name configured.")
             return
+        if not download_folder:
+            self.log("ERROR", "[Config] No local download folder configured.")
+            return
+        try:
+            os.makedirs(download_folder, exist_ok=True)
+        except OSError as exc:
+            self.log("ERROR", f"[Config] Cannot access local download folder: {exc}")
+            return
 
-        if not gdrive_folder_id:
-            self.log("WARNING", "[Config] Google Drive Folder ID is empty. Files will be downloaded locally but NOT uploaded to Drive. Set it in Settings.")
-
-        # Step 1: Open Zalo
         if not self.zalo_controller.ensure_zalo_running():
             self.log("ERROR", "[Open Zalo] Could not connect to Zalo PC instance.")
             return
 
-        self._scan_single_group(group_name, download_folder, download_timeout, gdrive_folder_id)
+        self._scan_single_group(group_name, download_folder, download_timeout)
 
-    def _scan_single_group(self, group_name: str, download_folder: str,
-                           download_timeout: int = 60, gdrive_folder_id: str = ""):
-        """Scans and syncs a single Zalo group."""
+    def _record_skipped(
+        self,
+        group_file: GroupFile,
+        group_name: str,
+        existing_path: str,
+    ):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        item = DownloadItem(
+            filename=group_file.filename,
+            filepath=existing_path,
+            filesize=(os.path.getsize(existing_path) if os.path.exists(existing_path) else group_file.filesize),
+            group_name=group_name,
+            message_id=group_file.message_id,
+            file_id=group_file.file_id,
+            download_status="skipped",
+            drive_status="not_required",
+            created_time=now_str,
+            uploaded_time=now_str,
+            last_scan=now_str,
+            status=SyncStatus.SKIPPED,
+        )
+        item.id = self.db_manager.add_item(item)
+        self.on_item_status_update(item, "Đã bỏ qua (trùng tên)", 100)
+
+    def _record_failed(self, group_file: GroupFile, group_name: str):
+        item = DownloadItem(
+            filename=group_file.filename,
+            filepath="",
+            filesize=group_file.filesize,
+            group_name=group_name,
+            message_id=group_file.message_id,
+            file_id=group_file.file_id,
+            download_status="failed",
+            drive_status="not_required",
+            status=SyncStatus.FAILED,
+            error_message="Download timeout or file missing",
+        )
+        item.id = self.db_manager.add_item(item)
+        self.on_item_status_update(item, "Tải xuống thất bại", 0)
+
+    def _scan_single_group(
+        self,
+        group_name: str,
+        download_folder: str,
+        download_timeout: int = 60,
+    ):
+        """Scans one group and saves every new attachment locally."""
         self.log("INFO", f"=== Starting scan for group '{group_name}' ===")
 
         if not self.zalo_controller.open_group(group_name):
-            self.log("ERROR", f"[Open Group] Failed to open group '{group_name}'. Group may not exist, not be joined, or Zalo not logged in.")
+            self.log(
+                "ERROR",
+                f"[Open Group] Failed to open group '{group_name}'. Group may not exist, not be joined, or Zalo not logged in.",
+            )
             return
 
         group_files: List[GroupFile] = self.zalo_controller.scan_group_files(group_name)
@@ -176,127 +253,110 @@ class ZaloGroupSyncEngine:
             self.log("INFO", f"[Scan Files] No files found in group '{group_name}'.")
             return
 
-        # Step 4: Identify new files using SQLite database (single batched query)
         unprocessed_ids = self.db_manager.filter_unprocessed(
-            group_name, [gf.file_id for gf in group_files]
+            group_name, [group_file.file_id for group_file in group_files]
         )
         unprocessed_set = set(unprocessed_ids)
         new_files_count = 0
-        for gf in group_files:
+        duplicate_action = self.config_manager.get("duplicate_action", "rename")
+
+        for group_file in group_files:
             if not self.is_running:
                 break
 
-            # Check if already processed in database
-            if gf.file_id not in unprocessed_set:
-                self.log("DEBUG", f"[SQLite Check] File '{gf.filename}' (ID: {gf.file_id}) already processed. Skipping.")
+            if group_file.file_id not in unprocessed_set:
+                self.log(
+                    "DEBUG",
+                    f"[SQLite Check] File '{group_file.filename}' (ID: {group_file.file_id}) already processed. Skipping.",
+                )
                 continue
 
             new_files_count += 1
-            self.log("INFO", f"[Scan Files] New unhandled file detected: '{gf.filename}' (ID: {gf.file_id}, Size: {gf.filesize / 1024:.1f} KB).")
+            self.log(
+                "INFO",
+                f"[Scan Files] New file: '{group_file.filename}' (ID: {group_file.file_id}, Size: {group_file.filesize / 1024:.1f} KB).",
+            )
 
-            # Step 5: Download File from Zalo PC
+            destination = resolve_local_destination(
+                download_folder,
+                group_file.filename,
+                duplicate_action,
+            )
+            if destination is None:
+                existing_path = os.path.join(
+                    os.path.abspath(download_folder),
+                    os.path.basename(group_file.filename),
+                )
+                self.log("INFO", f"[Local File] '{group_file.filename}' already exists. Skipped by policy.")
+                self._record_skipped(group_file, group_name, existing_path)
+                continue
+
             local_filepath = self.zalo_controller.download_group_file(
-                group_file=gf,
+                group_file=group_file,
                 download_folder=download_folder,
-                timeout=download_timeout
+                timeout=download_timeout,
+                destination_path=destination,
             )
 
             if not local_filepath or not os.path.exists(local_filepath):
-                self.log("ERROR", f"[Download File] Failed to confirm download for '{gf.filename}'. Marking failed.")
-                item = DownloadItem(
-                    filename=gf.filename,
-                    filepath="",
-                    filesize=gf.filesize,
-                    group_name=group_name,
-                    message_id=gf.message_id,
-                    file_id=gf.file_id,
-                    download_status="failed",
-                    drive_status="failed",
-                    status=SyncStatus.FAILED,
-                    error_message="Download timeout or file missing"
+                self.log(
+                    "ERROR",
+                    f"[Download File] Failed to confirm download for '{group_file.filename}'.",
                 )
-                self.db_manager.add_item(item)
+                self._record_failed(group_file, group_name)
                 continue
 
-            # Compute hash for duplicate safety
             try:
                 file_hash = calculate_sha256(local_filepath)
                 actual_size = os.path.getsize(local_filepath)
-            except Exception as e:
-                file_hash = f"hash_{gf.file_id}"
-                actual_size = gf.filesize
+            except Exception:
+                file_hash = f"hash_{group_file.file_id}"
+                actual_size = group_file.filesize
 
-            # Check if content already uploaded (hash-based dedup across sessions)
-            if self.db_manager.is_file_uploaded(file_hash):
-                self.log("INFO", f"[Hash Check] '{gf.filename}' (hash: {file_hash[:8]}...) already uploaded. Skipping.")
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                item = DownloadItem(
-                    filename=gf.filename,
-                    filepath=local_filepath,
-                    filesize=actual_size,
-                    group_name=group_name,
-                    message_id=gf.message_id,
-                    file_id=gf.file_id,
-                    download_status="downloaded",
-                    drive_status="completed",
-                    created_time=now_str,
-                    last_scan=now_str,
-                    status=SyncStatus.COMPLETED,
-                    hash=file_hash
-                )
-                self.db_manager.add_item(item)
-                continue
-
-            # Step 6: Create DownloadItem and add to SQLite
+            content_was_seen = self.db_manager.is_file_downloaded(file_hash)
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            resume_uri, resume_progress = self.db_manager.get_resumable_state(gf.file_id, group_name)
             item = DownloadItem(
-                filename=gf.filename,
+                filename=os.path.basename(local_filepath),
                 filepath=local_filepath,
                 filesize=actual_size,
                 group_name=group_name,
-                message_id=gf.message_id,
-                file_id=gf.file_id,
+                message_id=group_file.message_id,
+                file_id=group_file.file_id,
                 download_status="downloaded",
-                drive_status="pending",
+                drive_status="not_required",
                 created_time=now_str,
+                uploaded_time=now_str,
                 last_scan=now_str,
-                status=SyncStatus.PENDING,
+                status=SyncStatus.COMPLETED,
                 hash=file_hash,
-                resumable_uri=resume_uri,
-                resumable_progress=resume_progress
             )
+            item.id = self.db_manager.add_item(item)
 
-            item_id = self.db_manager.add_item(item)
-            item.id = item_id
-
-            self.log("INFO", f"[SQLite Update] Logged download for '{gf.filename}' to database (ID: {item_id}). Passing to Upload Queue.")
-
-            # Step 7: Enqueue for Google Drive upload
-            if gdrive_folder_id:
-                self.upload_queue.add_item(
-                    item=item,
-                    gdrive_folder_id=gdrive_folder_id,
-                    duplicate_action=self.config_manager.get("duplicate_action", "rename")
-                )
+            if content_was_seen:
+                status_text = "Đã tải xuống (nội dung trùng)"
+                self.log("INFO", f"[Hash Check] '{item.filename}' matches previously downloaded content.")
             else:
-                self.log("WARNING", "[Upload Drive] Google Drive folder ID not set. File downloaded locally but skipped Drive upload.")
+                status_text = "Đã tải xuống"
+
+            self.on_item_status_update(item, status_text, 100)
+            self.log("INFO", f"[Local Download] Saved '{item.filename}' to '{local_filepath}'.")
 
         if new_files_count == 0:
-            self.log("INFO", f"[Scan Files] Scan complete. All {len(group_files)} group files are already synced.")
+            self.log(
+                "INFO",
+                f"[Scan Files] Scan complete. All {len(group_files)} group files are already downloaded.",
+            )
         else:
             self.log("INFO", f"[Scan Files] Scan complete. Processed {new_files_count} new file(s).")
 
     def _sync_loop(self):
-        """Background loop executing scans at interval."""
         while self.is_running and not self._stop_event.is_set():
             try:
                 self.run_single_scan()
-            except Exception as e:
-                self.log("ERROR", f"[Sync Engine] Error during group scan iteration: {e}")
+            except Exception as exc:
+                self.log("ERROR", f"[Download Engine] Error during group scan: {exc}")
 
             interval = max(1, self.config_manager.check_interval)
-            # Sleep in small increments to respond quickly to stop event
             slept = 0
             while slept < interval and self.is_running and not self._stop_event.is_set():
                 time.sleep(1)

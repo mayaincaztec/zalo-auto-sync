@@ -415,8 +415,8 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount > 0
 
-    def is_file_uploaded(self, file_hash: str) -> bool:
-        """Checks if a file with the given SHA-256 hash has already been successfully uploaded."""
+    def is_file_downloaded(self, file_hash: str) -> bool:
+        """Checks whether this content hash completed local download before."""
         with self._lock:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -425,6 +425,10 @@ class DatabaseManager:
                 (file_hash, SyncStatus.COMPLETED.value)
             )
             return cursor.fetchone() is not None
+
+    def is_file_uploaded(self, file_hash: str) -> bool:
+        """Backward-compatible alias retained for existing database callers."""
+        return self.is_file_downloaded(file_hash)
 
     def _row_to_item(self, row) -> DownloadItem:
         return DownloadItem(
@@ -495,7 +499,7 @@ class DatabaseManager:
             return [self._row_to_item(r) for r in rows]
 
     def get_stats(self) -> Dict[str, Any]:
-        """Aggregates upload statistics in a single query."""
+        """Aggregates local download statistics in a single query."""
         with self._lock:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -524,7 +528,8 @@ class DatabaseManager:
 
             return {
                 "total_files": row["total"] or 0,
-                "uploaded_files": row["uploaded"],
+                "downloaded_files": row["uploaded"],
+                "uploaded_files": row["uploaded"],  # compatibility alias
                 "error_files": row["failed"],
                 "pending_files": row["pending"],
                 "total_bytes": row["total_bytes"],

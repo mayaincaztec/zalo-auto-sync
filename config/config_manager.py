@@ -14,22 +14,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "check_interval": 5,
     "download_folder": os.path.expanduser("~/Documents/Zalo Received Files"),
     "download_timeout": 300,
-    "gdrive_folder_id": "",
     "extensions": [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".zip", ".rar", ".mp4", ".txt"],
     "max_retry": 3,
     "thread_number": 2,
     "duplicate_action": "rename",
     "auto_start": False,
     "theme": "dark",
-    "credentials_file": "credentials.json",
-    "token_file": "token.json",
     "schedule_enabled": False,
     "schedule_start": "22:00",
     "schedule_end": "06:00",
     "speed_limit": 0,
-    "update_enabled": True,
+    "update_enabled": False,
     "update_url": "",
-    "update_github_repo": "loisude/Zalo-PC-Auto-Sync"
+    "update_github_repo": "mayaincaztec/zalo-auto-sync"
 }
 
 
@@ -130,10 +127,6 @@ class ConfigManager:
         return int(self.get("download_timeout", 300))
 
     @property
-    def gdrive_folder_id(self) -> str:
-        return self.get("gdrive_folder_id", "")
-
-    @property
     def extensions(self) -> List[str]:
         return self.get("extensions", DEFAULT_CONFIG["extensions"])
 
@@ -163,7 +156,7 @@ class ConfigManager:
 
     @property
     def update_enabled(self) -> bool:
-        return bool(self.get("update_enabled", True))
+        return bool(self.get("update_enabled", False))
 
     @property
     def update_url(self) -> str:

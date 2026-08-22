@@ -661,7 +661,8 @@ class ZaloController:
         self,
         group_file: GroupFile,
         download_folder: str,
-        timeout: int = 60
+        timeout: int = 60,
+        destination_path: Optional[str] = None,
     ) -> Optional[str]:
         msg_id = group_file.message_id
         url_info = self._message_url_map.get(msg_id)
@@ -678,7 +679,9 @@ class ZaloController:
 
         href, fname, fsize = url_info
         os.makedirs(download_folder, exist_ok=True)
-        dest_path = os.path.join(download_folder, group_file.filename)
+        dest_path = destination_path or os.path.join(
+            download_folder, os.path.basename(group_file.filename)
+        )
 
         self.log("INFO", f"[Download] Fetching '{group_file.filename}'...")
         resp = self._send_command("download", {"url": href, "destination": dest_path}, timeout=15)

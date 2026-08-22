@@ -21,6 +21,8 @@ except ImportError:
 
 DEFAULT_TIMEOUT = 30
 _UPDATE_DIR_NAME = "_updates"
+APP_EXE_NAME = "ZaloPCAutoDownload.exe"
+LEGACY_EXE_NAMES = ("ZaloPCSyncDrive.exe",)
 
 
 def get_current_version() -> str:
@@ -50,7 +52,7 @@ def _http_get_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Optional[Dict]:
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "ZaloPCSyncDrive-Updater/1.0", "Accept": "application/json"},
+            headers={"User-Agent": "ZaloPCAutoDownload-Updater/1.0", "Accept": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -120,7 +122,7 @@ def download_update(download_url: str, dest_path: str, timeout: int = DEFAULT_TI
     try:
         req = urllib.request.Request(
             download_url,
-            headers={"User-Agent": "ZaloPCSyncDrive-Updater/1.0"},
+            headers={"User-Agent": "ZaloPCAutoDownload-Updater/1.0"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest_path, "wb") as out:
             shutil.copyfileobj(resp, out)
@@ -145,10 +147,11 @@ def stage_update(zip_path: str, staging_dir: str) -> bool:
 
 
 def find_executable(staging_dir: str) -> Optional[str]:
-    """Locates ZaloPCSyncDrive.exe inside the staged zip contents."""
+    """Locates the current (or legacy) app executable in staged contents."""
+    accepted_names = {APP_EXE_NAME.lower(), *(name.lower() for name in LEGACY_EXE_NAMES)}
     for root, _dirs, files in os.walk(staging_dir):
         for name in files:
-            if name.lower() == "zalopcsyncdrive.exe":
+            if name.lower() in accepted_names:
                 return os.path.join(root, name)
     return None
 
@@ -163,7 +166,7 @@ def create_update_script(staging_dir: str, app_dir: str, script_path: str,
     new_exe = find_executable(staging_dir)
     if not new_exe:
         return False
-    target_exe = os.path.join(app_dir, "ZaloPCSyncDrive.exe")
+    target_exe = os.path.join(app_dir, APP_EXE_NAME)
     staging_node = os.path.join(staging_dir, "node_bridge")
     target_node = os.path.join(app_dir, "node_bridge")
 

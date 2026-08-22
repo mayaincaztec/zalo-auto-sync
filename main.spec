@@ -41,7 +41,6 @@ a = Analysis(
     binaries=[],
     datas=[
         ('config.json', '.'),
-        ('credentials.json', '.'),
         ('icons/app_icon.ico', 'icons'),
         ('icons/app_icon.png', 'icons'),
     ],
@@ -49,12 +48,6 @@ a = Analysis(
         'loguru',
         'watchdog',
         'watchdog.observers',
-        'googleapiclient',
-        'googleapiclient.http',
-        'google_auth_httplib2',
-        'httplib2',
-        'google_auth_oauthlib',
-        'google.oauth2.credentials',
         'PySide6',
         'sqlite3',
         'winreg'
@@ -154,15 +147,8 @@ a = Analysis(
 a.binaries = [b for b in a.binaries if _keep_qt(b[0], b[1])]
 
 # Also drop unneeded data files (translations, resources, extra plugins).
-# Keep googleapiclient's cached discovery document for the Drive API only
-# (~198KB). Without it, build('drive','v3') raises UnknownApiNameOrVersion
-# ('name: drive version: v3') because static_discovery defaults to True and the
-# app runs offline-first; the full discovery cache is ~30MB and unnecessary.
 def _keep_qt_data(src, dst):
     s = src.replace('\\', '/').lower()
-    # googleapiclient discovery documents: keep ONLY drive.v3.json
-    if '/discovery_cache/documents/' in s:
-        return s.endswith('/drive.v3.json')
     if 'pyside6' not in src.replace('\\', '/').lower():
         return True
     # keep only the platform plugin we need
@@ -192,7 +178,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ZaloPCSyncDrive',
+    name='ZaloPCAutoDownload',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

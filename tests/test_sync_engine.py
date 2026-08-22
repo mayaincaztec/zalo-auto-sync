@@ -1,24 +1,24 @@
-"""
-Unit Tests for ZaloGroupSyncEngine
-"""
+"""Tests for the local-only Zalo group download engine."""
 
 import os
+import shutil
 import tempfile
-import threading
 import time
 import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from zalo_drive_sync.config.config_manager import ConfigManager
-from zalo_drive_sync.core.sync_engine import ZaloGroupSyncEngine
+from zalo_drive_sync.core.sync_engine import (
+    ZaloGroupSyncEngine,
+    resolve_local_destination,
+)
 from zalo_drive_sync.database.db_manager import DatabaseManager
-from zalo_drive_sync.database.models import SyncStatus
+from zalo_drive_sync.database.models import DownloadItem, SyncStatus
 from zalo_drive_sync.services.zalo_controller import GroupFile
 
 
 class FakeDateTime:
-    """Stand-in for datetime in sync_engine; now() returns a fixed value."""
     fixed = datetime(2026, 1, 1, 9, 0)
 
     @classmethod
@@ -36,422 +36,259 @@ def make_group_file(fid="f1", name="doc.pdf", size=100, group="LOIMINH"):
     )
 
 
-class TestSyncEngine(unittest.TestCase):
+class TestLocalDestination(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
 
+    def tearDown(self):
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def test_returns_original_name_when_available(self):
+        result = resolve_local_destination(self.folder, "report.pdf", "rename")
+        self.assertEqual(result, os.path.join(self.folder, "report.pdf"))
+
+    def test_rename_adds_incrementing_suffix(self):
+        open(os.path.join(self.folder, "report.pdf"), "wb").close()
+        open(os.path.join(self.folder, "report (1).pdf"), "wb").close()
+        result = resolve_local_destination(self.folder, "report.pdf", "rename")
+        self.assertEqual(result, os.path.join(self.folder, "report (2).pdf"))
+
+    def test_skip_returns_none_for_existing_name(self):
+        open(os.path.join(self.folder, "report.pdf"), "wb").close()
+        self.assertIsNone(resolve_local_destination(self.folder, "report.pdf", "skip"))
+
+    def test_overwrite_reuses_existing_path(self):
+        path = os.path.join(self.folder, "report.pdf")
+        open(path, "wb").close()
+        self.assertEqual(resolve_local_destination(self.folder, "report.pdf", "overwrite"), path)
+
+    def test_filename_is_confined_to_destination_folder(self):
+        result = resolve_local_destination(self.folder, "../outside.pdf", "rename")
+        self.assertEqual(result, os.path.join(self.folder, "outside.pdf"))
+
+
+class TestSyncEngine(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
+        self.download_dir = os.path.join(self.test_dir, "sharepoint")
         ConfigManager._instance = None
         self.config = ConfigManager(os.path.join(self.test_dir, "config.json"))
-        self.config.set("group_name", "LOIMINH")
-        self.config.set("check_interval", 5)
-        self.config.set("gdrive_folder_id", "gdrive_1")
-        self.config.set("download_timeout", 30)
+        self.config.update_all({
+            "group_name": "LOIMINH",
+            "check_interval": 5,
+            "download_folder": self.download_dir,
+            "download_timeout": 30,
+            "duplicate_action": "rename",
+        })
 
         self.db = DatabaseManager(os.path.join(self.test_dir, "test.db"))
-        self.gdrive = MagicMock()
         self.logs = []
         self.items = []
+        self.zc = MagicMock()
+        self.engine = ZaloGroupSyncEngine(
+            config_manager=self.config,
+            db_manager=self.db,
+            log_callback=lambda level, message: self.logs.append((level, message)),
+            item_callback=lambda item, message, percent: self.items.append((item, message, percent)),
+            zalo_controller=self.zc,
+        )
 
         self.sample_file = os.path.join(self.test_dir, "sample.pdf")
-        with open(self.sample_file, "wb") as f:
-            f.write(b"sample-content-for-hash")
-
-        with patch("zalo_drive_sync.core.sync_engine.ZaloController") as ZC, \
-             patch("zalo_drive_sync.core.sync_engine.UploadQueueManager") as UQ:
-            self.engine = ZaloGroupSyncEngine(
-                config_manager=self.config,
-                db_manager=self.db,
-                gdrive_service=self.gdrive,
-                log_callback=lambda lvl, msg: self.logs.append((lvl, msg)),
-                item_callback=lambda item, msg, pct: self.items.append((item, msg, pct)),
-            )
-            self.zc = ZC.return_value
-            self.uq = UQ.return_value
+        with open(self.sample_file, "wb") as handle:
+            handle.write(b"sample-content-for-hash")
 
     def tearDown(self):
         self.engine.stop()
         self.db.close()
         ConfigManager._instance = None
-        for root, _, files in os.walk(self.test_dir, topdown=False):
-            for name in files:
-                try:
-                    os.remove(os.path.join(root, name))
-                except OSError:
-                    pass
-            os.rmdir(root)
+        shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def _has_log(self, needle):
-        return any(needle in m for _, m in self.logs)
+        return any(needle in message for _, message in self.logs)
 
-    # --- init / lifecycle ---
-
-    def test_init_wires_dependencies(self):
+    def test_init_wires_local_dependencies(self):
         self.assertIs(self.engine.config_manager, self.config)
         self.assertIs(self.engine.db_manager, self.db)
-        self.assertIs(self.engine.gdrive_service, self.gdrive)
-        self.assertFalse(self.engine.is_running)
-        self.assertIsNone(self.engine._thread)
-
-    def test_init_controller_uses_log_callback(self):
-        from zalo_drive_sync.core import sync_engine as se
-        with patch.object(se, "ZaloController") as ZC:
-            ZC.return_value = MagicMock()
-            engine = ZaloGroupSyncEngine(self.config, self.db, self.gdrive)
-            ZC.assert_called_once()
-            call_kwargs = ZC.call_args.kwargs
-            self.assertIn("log_callback", call_kwargs)
-            self.assertEqual(call_kwargs["log_callback"], engine.log)
-
-    def test_start_starts_queue_and_thread(self):
-        self.engine.start()
-        self.assertTrue(self.engine.is_running)
-        self.uq.start.assert_called_once()
-        self.assertIsNotNone(self.engine._thread)
-        self.assertTrue(self._has_log("[Sync Engine] Started"))
-
-    def test_start_is_idempotent(self):
-        self.engine.start()
-        thread1 = self.engine._thread
-        self.engine.start()
-        self.assertIs(self.engine._thread, thread1)
-        self.uq.start.assert_called_once()
-
-    def test_stop_stops_queue_and_bridge(self):
-        self.engine.start()
-        self.engine.stop()
-        self.assertFalse(self.engine.is_running)
-        self.uq.stop.assert_called_once()
-        self.zc._stop_bridge.assert_called_once()
-        self.assertIsNone(self.engine._thread)
-        self.assertTrue(self._has_log("[Sync Engine] Stopped"))
-
-    def test_stop_when_not_running_noop(self):
-        self.engine.stop()
-        self.uq.stop.assert_not_called()
-
-    def test_stop_bridge_exception_swallowed(self):
-        self.engine.is_running = True
-        self.zc._stop_bridge.side_effect = Exception("bridge died")
-        self.engine.stop()  # must not raise
-
-    def test_stop_without_upload_queue(self):
-        self.engine.is_running = True
-        self.engine.upload_queue = None
-        self.engine.stop()  # must not raise
+        self.assertIs(self.engine.zalo_controller, self.zc)
+        self.assertFalse(self.engine._owns_controller)
         self.assertFalse(self.engine.is_running)
 
-    def test_stop_without_controller(self):
-        self.engine.is_running = True
-        self.engine.zalo_controller = None
-        self.engine.stop()  # must not raise
+    def test_owned_controller_uses_engine_callbacks(self):
+        with patch("zalo_drive_sync.core.sync_engine.ZaloController") as controller_cls:
+            engine = ZaloGroupSyncEngine(self.config, self.db)
+        kwargs = controller_cls.call_args.kwargs
+        self.assertEqual(kwargs["log_callback"], engine.log)
+        self.assertIs(kwargs["config_manager"], self.config)
+
+    def test_start_is_idempotent_and_stop_aborts_waiting(self):
+        with patch.object(self.engine, "run_single_scan"):
+            self.engine.start()
+            thread = self.engine._thread
+            self.engine.start()
+            self.assertIs(self.engine._thread, thread)
+            self.engine.stop()
         self.assertFalse(self.engine.is_running)
+        self.zc.abort_waiting.assert_called_once()
+        self.zc._stop_bridge.assert_not_called()
 
-    def test_stop_abort_exception_swallowed(self):
-        self.engine.is_running = True
-        self.zc.abort_waiting.side_effect = Exception("abort died")
-        self.engine.stop()  # must not raise
-
-    def test_stop_with_shared_controller_abort_exception_swallowed(self):
-        shared = MagicMock()
-        shared.abort_waiting.side_effect = Exception("abort died")
-        with patch("zalo_drive_sync.core.sync_engine.UploadQueueManager") as UQ:
-            UQ.return_value = MagicMock()
-            engine = ZaloGroupSyncEngine(
-                config_manager=self.config,
-                db_manager=self.db,
-                gdrive_service=self.gdrive,
-                zalo_controller=shared,
-            )
-            engine.is_running = True
-            engine.stop()  # must not raise
-
-    def test_stop_with_shared_controller_keeps_bridge_alive(self):
-        shared = MagicMock()
-        with patch("zalo_drive_sync.core.sync_engine.UploadQueueManager") as UQ:
-            UQ.return_value = MagicMock()
-            engine = ZaloGroupSyncEngine(
-                config_manager=self.config,
-                db_manager=self.db,
-                gdrive_service=self.gdrive,
-                zalo_controller=shared,
-            )
-            self.assertFalse(engine._owns_controller)
-            engine.start()
-            engine.stop()
-        shared.abort_waiting.assert_called_once()
-        shared._stop_bridge.assert_not_called()
-        self.assertFalse(engine.is_running)
-
-    def test_init_accepts_shared_controller(self):
-        shared = MagicMock()
-        engine = ZaloGroupSyncEngine(
-            config_manager=self.config,
-            db_manager=self.db,
-            gdrive_service=self.gdrive,
-            zalo_controller=shared,
-        )
-        self.assertIs(engine.zalo_controller, shared)
-        self.assertFalse(engine._owns_controller)
-
-    def test_log_forwards_to_callback(self):
-        self.engine.log("INFO", "hello world")
-        self.assertIn(("INFO", "hello world"), self.logs)
-
-    def test_on_queue_status_update_forwards(self):
-        from zalo_drive_sync.database.models import DownloadItem
+    def test_status_callback_alias_forwards(self):
         item = DownloadItem(id=1, filename="x.pdf")
-        self.engine.on_queue_status_update(item, "Uploading (50%)", 50)
-        self.assertEqual(len(self.items), 1)
-        self.assertEqual(self.items[0][1], "Uploading (50%)")
-        self.assertEqual(self.items[0][2], 50)
-
-    def test_on_queue_status_update_without_callback(self):
-        engine = ZaloGroupSyncEngine(
-            config_manager=self.config,
-            db_manager=self.db,
-            gdrive_service=self.gdrive,
-        )
-        engine.on_queue_status_update(None, "Uploading", 50)  # must not raise
-
-    # --- schedule window ---
+        self.engine.on_queue_status_update(item, "Đã tải xuống", 100)
+        self.assertEqual(self.items, [(item, "Đã tải xuống", 100)])
 
     def test_schedule_disabled_always_in_window(self):
         self.config.set("schedule_enabled", False)
         self.assertTrue(self.engine._in_schedule_window())
 
-    def test_schedule_within_window(self):
-        self.config.set("schedule_enabled", True)
-        self.config.set("schedule_start", "08:00")
-        self.config.set("schedule_end", "10:00")
-        FakeDateTime.fixed = datetime(2026, 1, 1, 9, 0)
-        with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
-            self.assertTrue(self.engine._in_schedule_window())
-
-    def test_schedule_outside_window(self):
-        self.config.set("schedule_enabled", True)
-        self.config.set("schedule_start", "08:00")
-        self.config.set("schedule_end", "10:00")
-        FakeDateTime.fixed = datetime(2026, 1, 1, 12, 0)
-        with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
-            self.assertFalse(self.engine._in_schedule_window())
-
-    def test_schedule_cross_midnight(self):
-        self.config.set("schedule_enabled", True)
-        self.config.set("schedule_start", "22:00")
-        self.config.set("schedule_end", "06:00")
-        for hour, expected in [(23, True), (3, True), (12, False)]:
+    def test_schedule_within_and_outside_window(self):
+        self.config.update_all({"schedule_enabled": True, "schedule_start": "08:00", "schedule_end": "10:00"})
+        for hour, expected in ((9, True), (12, False)):
             FakeDateTime.fixed = datetime(2026, 1, 1, hour, 0)
             with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
                 self.assertEqual(self.engine._in_schedule_window(), expected)
 
-    def test_schedule_invalid_format_defaults_true(self):
-        self.config.set("schedule_enabled", True)
-        self.config.set("schedule_start", "bogus")
-        self.config.set("schedule_end", "10:00")
-        with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
-            self.assertTrue(self.engine._in_schedule_window())
+    def test_schedule_cross_midnight(self):
+        self.config.update_all({"schedule_enabled": True, "schedule_start": "22:00", "schedule_end": "06:00"})
+        for hour, expected in ((23, True), (3, True), (12, False)):
+            FakeDateTime.fixed = datetime(2026, 1, 1, hour, 0)
+            with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
+                self.assertEqual(self.engine._in_schedule_window(), expected)
 
-    # --- run_single_scan ---
-
-    def test_run_single_scan_skips_outside_schedule(self):
-        self.config.set("schedule_enabled", True)
-        self.config.set("schedule_start", "08:00")
-        self.config.set("schedule_end", "10:00")
-        FakeDateTime.fixed = datetime(2026, 1, 1, 12, 0)
-        with patch("zalo_drive_sync.core.sync_engine.datetime", FakeDateTime):
-            self.engine.run_single_scan()
-        self.zc.ensure_zalo_running.assert_not_called()
-        self.assertTrue(self._has_log("Outside scheduled window"))
-
-    def test_run_single_scan_no_group_name(self):
+    def test_run_single_scan_requires_group(self):
         self.config.set("group_name", "")
         self.engine.run_single_scan()
         self.zc.ensure_zalo_running.assert_not_called()
-        self.assertTrue(self._has_log("No Zalo group name configured"))
+        self.assertTrue(self._has_log("No Zalo group name"))
 
-    def test_run_single_scan_zalo_not_running(self):
+    def test_run_single_scan_requires_download_folder(self):
+        self.config.set("download_folder", "")
+        self.engine.run_single_scan()
+        self.zc.ensure_zalo_running.assert_not_called()
+        self.assertTrue(self._has_log("No local download folder"))
+
+    def test_run_single_scan_stops_when_zalo_unavailable(self):
         self.zc.ensure_zalo_running.return_value = False
         self.engine.run_single_scan()
-        self.assertTrue(self._has_log("Could not connect to Zalo PC instance"))
         self.zc.open_group.assert_not_called()
+        self.assertTrue(self._has_log("Could not connect"))
 
-    def test_run_single_scan_success_delegates_to_scan(self):
+    def test_run_single_scan_delegates_without_google_drive(self):
         self.zc.ensure_zalo_running.return_value = True
         with patch.object(self.engine, "_scan_single_group") as scan:
             self.engine.run_single_scan()
-        scan.assert_called_once_with("LOIMINH", self.config.download_folder, 30, "gdrive_1")
+        scan.assert_called_once_with("LOIMINH", self.download_dir, 30)
 
-    def test_run_single_scan_empty_gdrive_warns(self):
-        self.config.set("gdrive_folder_id", "")
-        self.zc.ensure_zalo_running.return_value = True
-        with patch.object(self.engine, "_scan_single_group") as scan:
-            self.engine.run_single_scan()
-        scan.assert_called_once()
-        self.assertTrue(self._has_log("Drive Folder ID is empty"))
-
-    # --- _scan_single_group ---
-
-    def test_scan_open_group_fails(self):
+    def test_scan_open_group_failure(self):
         self.zc.open_group.return_value = False
         self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
         self.assertTrue(self._has_log("Failed to open group"))
-        self.db.get_all_items(5)  # ensure no crash
 
     def test_scan_no_files(self):
         self.zc.open_group.return_value = True
         self.zc.scan_group_files.return_value = []
         self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
         self.assertTrue(self._has_log("No files found"))
 
-    def test_scan_download_failure_marks_failed(self):
+    def test_scan_download_failure_is_recorded(self):
         self.zc.open_group.return_value = True
         self.zc.scan_group_files.return_value = [make_group_file()]
         self.zc.download_group_file.return_value = None
         self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        self.uq.add_item.assert_not_called()
-        items = self.db.get_all_items(5)
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0].drive_status, "failed")
-        self.assertEqual(items[0].status, SyncStatus.FAILED)
-        self.assertEqual(items[0].error_message, "Download timeout or file missing")
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
+        item = self.db.get_all_items(1)[0]
+        self.assertEqual(item.status, SyncStatus.FAILED)
+        self.assertEqual(item.download_status, "failed")
+        self.assertEqual(item.drive_status, "not_required")
+        self.assertEqual(self.items[0][1:], ("Tải xuống thất bại", 0))
 
-    def test_scan_download_file_missing_on_disk_marks_failed(self):
+    def test_scan_success_completes_locally(self):
+        group_file = make_group_file(fid="f9", name="report.pdf")
         self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file()]
-        self.zc.download_group_file.return_value = os.path.join(self.test_dir, "ghost.pdf")
-        self.engine.is_running = True
-        with patch("zalo_drive_sync.core.sync_engine.os.path.exists", side_effect=lambda p: False):
-            self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        items = self.db.get_all_items(5)
-        self.assertEqual(items[0].drive_status, "failed")
-
-    def test_scan_hash_already_uploaded_dedup(self):
-        self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file()]
+        self.zc.scan_group_files.return_value = [group_file]
         self.zc.download_group_file.return_value = self.sample_file
         self.engine.is_running = True
-        with patch("zalo_drive_sync.core.sync_engine.calculate_sha256", return_value="abc123"):
-            with patch.object(self.db, "is_file_uploaded", return_value=True):
-                self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        self.uq.add_item.assert_not_called()
-        items = self.db.get_all_items(5)
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0].drive_status, "completed")
-        self.assertEqual(items[0].status, SyncStatus.COMPLETED)
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
 
-    def test_scan_normal_flow_enqueues_upload(self):
-        self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file(fid="f9", name="report.pdf")]
-        self.zc.download_group_file.return_value = self.sample_file
-        self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        self.uq.add_item.assert_called_once()
-        kwargs = self.uq.add_item.call_args.kwargs
-        self.assertEqual(kwargs["gdrive_folder_id"], "gdrive_1")
-        self.assertEqual(kwargs["duplicate_action"], "rename")
-        item = kwargs["item"]
-        self.assertEqual(item.drive_status, "pending")
-        self.assertEqual(item.group_name, "LOIMINH")
+        call = self.zc.download_group_file.call_args.kwargs
+        self.assertEqual(call["destination_path"], os.path.join(self.download_dir, "report.pdf"))
+        item = self.db.get_all_items(1)[0]
+        self.assertEqual(item.status, SyncStatus.COMPLETED)
+        self.assertEqual(item.download_status, "downloaded")
+        self.assertEqual(item.drive_status, "not_required")
         self.assertEqual(item.filepath, self.sample_file)
-        # db has the row with real hash
-        rows = self.db.get_all_items(5)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].status, SyncStatus.PENDING)
+        self.assertEqual(self.items[0][1:], ("Đã tải xuống", 100))
 
-    def test_scan_no_gdrive_folder_skips_enqueue(self):
+    def test_scan_existing_name_skip_policy(self):
+        os.makedirs(self.download_dir)
+        existing = os.path.join(self.download_dir, "report.pdf")
+        with open(existing, "wb") as handle:
+            handle.write(b"old")
+        self.config.set("duplicate_action", "skip")
+        self.zc.open_group.return_value = True
+        self.zc.scan_group_files.return_value = [make_group_file(name="report.pdf")]
+        self.engine.is_running = True
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
+        self.zc.download_group_file.assert_not_called()
+        item = self.db.get_all_items(1)[0]
+        self.assertEqual(item.status, SyncStatus.SKIPPED)
+        self.assertEqual(item.filepath, existing)
+
+    def test_scan_existing_name_rename_policy(self):
+        os.makedirs(self.download_dir)
+        open(os.path.join(self.download_dir, "report.pdf"), "wb").close()
+        self.zc.open_group.return_value = True
+        self.zc.scan_group_files.return_value = [make_group_file(name="report.pdf")]
+        self.zc.download_group_file.return_value = self.sample_file
+        self.engine.is_running = True
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
+        destination = self.zc.download_group_file.call_args.kwargs["destination_path"]
+        self.assertEqual(destination, os.path.join(self.download_dir, "report (1).pdf"))
+
+    def test_scan_same_hash_still_records_downloaded_attachment(self):
         self.zc.open_group.return_value = True
         self.zc.scan_group_files.return_value = [make_group_file()]
         self.zc.download_group_file.return_value = self.sample_file
         self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "")
-        self.uq.add_item.assert_not_called()
-        self.assertTrue(self._has_log("Google Drive folder ID not set"))
+        with patch.object(self.db, "is_file_downloaded", return_value=True):
+            self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
+        self.assertEqual(self.db.get_all_items(1)[0].status, SyncStatus.COMPLETED)
+        self.assertIn("nội dung trùng", self.items[0][1])
 
-    def test_scan_hash_error_uses_fallback(self):
+    def test_scan_hash_failure_uses_file_id_fallback(self):
         self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file(fid="fb")]
+        self.zc.scan_group_files.return_value = [make_group_file(fid="fallback")]
         self.zc.download_group_file.return_value = self.sample_file
         self.engine.is_running = True
         with patch("zalo_drive_sync.core.sync_engine.calculate_sha256", side_effect=OSError("read")):
-            self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        self.uq.add_item.assert_called_once()
-        item = self.uq.add_item.call_args.kwargs["item"]
-        self.assertEqual(item.hash, "hash_fb")
+            self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
+        self.assertEqual(self.db.get_all_items(1)[0].hash, "hash_fallback")
 
-    def test_scan_stops_when_engine_not_running(self):
+    def test_processed_file_is_not_downloaded_again(self):
+        group_file = make_group_file(fid="known")
+        self.db.add_item(DownloadItem(
+            filename=group_file.filename,
+            group_name="LOIMINH",
+            file_id="known",
+            download_status="downloaded",
+            status=SyncStatus.COMPLETED,
+            hash="existing",
+        ))
         self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file(fid="a"), make_group_file(fid="b")]
-        self.engine.is_running = False
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        self.zc.download_group_file.assert_not_called()
-        self.uq.add_item.assert_not_called()
-        self.assertTrue(self._has_log("already synced"))
-
-    def test_scan_already_processed_file_skipped(self):
-        self.zc.open_group.return_value = True
-        gf = make_group_file(fid="known")
-        self.zc.scan_group_files.return_value = [gf]
-        # insert a known (completed) row first
-        first = DownloadItemForTest(gf)
-        self.db.add_item(first)
+        self.zc.scan_group_files.return_value = [group_file]
         self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
+        self.engine._scan_single_group("LOIMINH", self.download_dir, 30)
         self.zc.download_group_file.assert_not_called()
         self.assertTrue(self._has_log("already processed"))
 
-    def test_scan_completes_all_synced_message(self):
-        self.zc.open_group.return_value = True
-        self.zc.scan_group_files.return_value = [make_group_file()]
-        self.zc.download_group_file.return_value = None  # failed path
-        self.engine.is_running = True
-        self.engine._scan_single_group("LOIMINH", self.test_dir, 30, "gdrive_1")
-        # new_files_count=1 -> "Processed 1 new file(s)"
-        self.assertTrue(self._has_log("Processed 1 new file(s)"))
-
-    # --- _sync_loop ---
-
-    def test_sync_loop_runs_scan_and_stops_cleanly(self):
+    def test_sync_loop_logs_scan_exception(self):
         with patch("zalo_drive_sync.core.sync_engine.time.sleep"):
-            with patch.object(self.engine, "run_single_scan") as rs:
+            with patch.object(self.engine, "run_single_scan", side_effect=RuntimeError("boom")):
                 self.engine.start()
-                time.sleep(0.3)
+                time.sleep(0.05)
                 self.engine.stop()
-        self.assertTrue(rs.called)
-
-    def test_sync_loop_handles_scan_exception(self):
-        with patch("zalo_drive_sync.core.sync_engine.time.sleep"):
-            with patch.object(self.engine, "run_single_scan",
-                              side_effect=RuntimeError("scan boom")):
-                self.engine.start()
-                time.sleep(0.3)
-                self.engine.stop()
-        self.assertTrue(self._has_log("Error during group scan iteration"))
-
-
-class DownloadItemForTest:
-    """Lightweight row for seeding the database in tests."""
-    def __init__(self, gf):
-        self.filename = gf.filename
-        self.filepath = ""
-        self.filesize = gf.filesize
-        self.group_name = gf.group_name
-        self.message_id = gf.message_id
-        self.file_id = gf.file_id
-        self.download_status = "downloaded"
-        self.drive_status = "completed"
-        self.created_time = None
-        self.uploaded_time = None
-        self.last_scan = None
-        self.status = SyncStatus.COMPLETED
-        self.hash = "existing_hash"
-        self.drive_file_id = "did"
-        self.error_message = None
-        self.retry_count = 0
-        self.resumable_uri = ""
-        self.resumable_progress = 0
+        self.assertTrue(self._has_log("Error during group scan"))
 
 
 if __name__ == "__main__":

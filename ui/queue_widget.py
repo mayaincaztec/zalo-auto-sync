@@ -1,6 +1,6 @@
 """
-Upload Queue Table Widget
-Displays real-time progress, file size, status, and control actions for queued uploads.
+Local Download Table Widget
+Displays downloaded files, size, progress, and status.
 """
 
 from typing import Dict, Optional
@@ -20,11 +20,11 @@ from zalo_drive_sync.ui.i18n import _TR as _
 # Upper bound on table rows so a long-running session doesn't grow UI memory.
 _MAX_ROWS = 500
 # Columns whose text should be horizontally centered.
-_CENTER_COLS = (0, 4, 5)  # ID, Trạng thái, Thử lại
+_CENTER_COLS = (0, 4)  # ID, Trạng thái
 
 
 class QueueWidget(QWidget if PYSIDE_AVAILABLE else object):
-    """PySide6 Table Widget displaying active upload items and progress."""
+    """PySide6 table showing local download results and progress."""
 
     def __init__(self, parent: Optional[QWidget] = None):
         if not PYSIDE_AVAILABLE:
@@ -42,10 +42,10 @@ class QueueWidget(QWidget if PYSIDE_AVAILABLE else object):
         layout.addWidget(header_label)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
             _["queue_col_id"], _["queue_col_filename"], _["queue_col_size"],
-            _["queue_col_progress"], _["queue_col_status"], _["queue_col_retries"]
+            _["queue_col_progress"], _["queue_col_status"]
         ])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
@@ -53,7 +53,7 @@ class QueueWidget(QWidget if PYSIDE_AVAILABLE else object):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
-        # Center-align the header text for ID / Trạng thái / Thử lại columns
+        # Center-align the header text for ID / Trạng thái columns
         for col in _CENTER_COLS:
             header_item = self.table.horizontalHeaderItem(col)
             if header_item is not None:
@@ -91,9 +91,6 @@ class QueueWidget(QWidget if PYSIDE_AVAILABLE else object):
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 4, status_item)
-            retry_item = QTableWidgetItem(str(item.retry_count))
-            retry_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, 5, retry_item)
 
         # Update dynamic fields
         pbar = self.table.cellWidget(row, 3)
@@ -103,9 +100,6 @@ class QueueWidget(QWidget if PYSIDE_AVAILABLE else object):
         status_item = QTableWidgetItem(status_text)
         status_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 4, status_item)
-        retry_item = QTableWidgetItem(str(item.retry_count))
-        retry_item.setTextAlignment(Qt.AlignCenter)
-        self.table.setItem(row, 5, retry_item)
 
     def _prune_rows(self):
         """Removes oldest rows when the table reaches _MAX_ROWS."""

@@ -1,6 +1,6 @@
 """
 Settings Widget / Tab
-PySide6 settings interface for modifying download directory, Google Drive ID, extensions, and intervals.
+PySide6 settings for direct downloads to a local or SharePoint-synced folder.
 """
 
 import io
@@ -111,10 +111,6 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
         self.txt_download_timeout.setPlaceholderText(str(_DEFAULT_TIMEOUT))
         folder_layout.addRow(_["settings_timeout"], self.txt_download_timeout)
 
-        self.txt_gdrive_folder = QLineEdit()
-        self.txt_gdrive_folder.setPlaceholderText(_["settings_gdrive_placeholder"])
-        folder_layout.addRow(_["settings_gdrive_id"], self.txt_gdrive_folder)
-
         layout.addWidget(folder_group)
 
         # Group 2: Filter & Strategy
@@ -148,12 +144,6 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
         self.combo_interval = QComboBox()
         self.combo_interval.addItems([str(v) + _["timeout_seconds"] for v in (30, 60, 120, 300, 600)])
 
-        self.combo_threads = QComboBox()
-        self.combo_threads.addItems([str(v) for v in range(1, 9)])
-
-        self.combo_retries = QComboBox()
-        self.combo_retries.addItems([str(v) for v in range(1, 11)])
-
         self.chk_auto_start = QCheckBox(_["settings_auto_start"])
         self.chk_auto_start.setObjectName("chk_auto_start")
         self.chk_auto_start.setToolTip(_["settings_auto_start_tip"])
@@ -161,8 +151,6 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
         # Single row of labeled fields (label above, control below)
         fields = [
             (_["settings_interval"], self.combo_interval),
-            (_["settings_threads"], self.combo_threads),
-            (_["settings_retries"], self.combo_retries),
         ]
         for idx, (title, widget) in enumerate(fields):
             lbl = QLabel(title)
@@ -171,10 +159,8 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
             perf_grid.addWidget(widget, 1, idx)
 
         # Auto-start checkbox on its own row, left-aligned
-        perf_grid.addWidget(self.chk_auto_start, 2, 0, 1, 3)
+        perf_grid.addWidget(self.chk_auto_start, 2, 0, 1, 1)
         perf_grid.setColumnStretch(0, 1)
-        perf_grid.setColumnStretch(1, 1)
-        perf_grid.setColumnStretch(2, 1)
 
         layout.addWidget(perf_group)
 
@@ -345,14 +331,11 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
 
         self.txt_download_folder.setText(self.config_manager.download_folder)
         self.txt_download_timeout.setText(str(self.config_manager.download_timeout))
-        self.txt_gdrive_folder.setText(self.config_manager.gdrive_folder_id)
 
         ext_list = self.config_manager.extensions
         self.txt_extensions.setText(", ".join(ext_list))
 
         self._set_combo_keep(self.combo_interval, str(self.config_manager.check_interval) + _["timeout_seconds"])
-        self._set_combo_keep(self.combo_threads, str(self.config_manager.thread_number))
-        self._set_combo_keep(self.combo_retries, str(self.config_manager.max_retry))
         dup_action = self.config_manager.get("duplicate_action", "rename")
         self._set_dup_action(dup_action)
 
@@ -540,14 +523,13 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
         group_name = self.combo_group_name.currentText().strip()
 
         folder = self.txt_download_folder.text().strip()
-        gdrive_id = self.txt_gdrive_folder.text().strip()
 
         raw_exts = self.txt_extensions.text().split(",")
         exts = [e.strip() if e.strip().startswith(".") else f".{e.strip()}" for e in raw_exts if e.strip()]
 
         warnings = []
-        if not gdrive_id:
-            warnings.append(_["settings_missing_gdrive"])
+        if not folder:
+            warnings.append(_["settings_missing_folder"])
         if not group_name:
             warnings.append(_["settings_missing_group"])
         if not exts:
@@ -570,12 +552,9 @@ class SettingsWidget(QWidget if PYSIDE_AVAILABLE else object):
             "group_name": group_name,
             "download_folder": folder,
             "download_timeout": self._timeout_value(),
-            "gdrive_folder_id": gdrive_id,
             "extensions": exts,
             "check_interval": self._combo_int(self.combo_interval),
             "interval": self._combo_int(self.combo_interval),
-            "thread_number": self._combo_int(self.combo_threads),
-            "max_retry": self._combo_int(self.combo_retries),
             "duplicate_action": self._get_dup_action(),
             "auto_start": self.chk_auto_start.isChecked(),
             "auto_start_windows": self.chk_auto_start.isChecked(),
