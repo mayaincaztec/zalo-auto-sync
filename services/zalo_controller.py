@@ -100,6 +100,11 @@ class ZaloController:
         self._events: List[Dict[str, Any]] = []
         self._events_lock = threading.Lock()
         self._reader_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._ready_event = threading.Event()
+        self._stderr_lines: List[str] = []
+        self._stderr_lock = threading.Lock()
+        self._reader_error = ""
         self._running = False
 
     def log(self, level: str, message: str):
@@ -144,6 +149,11 @@ class ZaloController:
         self._kill_orphan_bridges()
         self.log("INFO", "[Bridge] Starting Node.js Zalo API bridge...")
         try:
+            self._ready_event.clear()
+            self._reader_error = ""
+            with self._stderr_lock:
+                self._stderr_lines.clear()
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
             self._process = subprocess.Popen(
                 [NODE_BIN, "--max-old-space-size=2048", BRIDGE_SCRIPT],
                 stdin=subprocess.PIPE,
@@ -153,17 +163,26 @@ class ZaloController:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                bufsize=1
+                bufsize=1,
+                creationflags=creationflags,
             )
             self._running = True
             self._reader_thread = threading.Thread(target=self._read_stdout, daemon=True)
+            self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
             self._reader_thread.start()
-            ok = self._wait_for_event("ready", timeout=10)
+            self._stderr_thread.start()
+            ok = self._ready_event.wait(timeout=10)
             if ok:
                 self.log("INFO", "[Bridge] Node.js bridge started.")
                 return True
             stderr_out = self._read_stderr()
-            self.log("ERROR", f"[Bridge] No ready event. stderr: {stderr_out}")
+            exit_code = self._process.poll() if self._process else None
+            details = stderr_out or self._reader_error or "no diagnostic output"
+            self.log(
+                "ERROR",
+                f"[Bridge] No ready event (exit={exit_code}). Details: {details}",
+            )
+            self._stop_bridge()
             return False
         except FileNotFoundError:
             self.log("ERROR", "[Bridge] Node.js not found. Install from https://nodejs.org")
@@ -175,9 +194,6 @@ class ZaloController:
     def _stop_bridge(self):
         with self._bridge_lock:
             self._running = False
-            if self._reader_thread and self._reader_thread.is_alive():
-                self._reader_thread.join(timeout=1.0)
-            self._reader_thread = None
             if self._process:
                 try:
                     self._process.terminate()
@@ -188,14 +204,36 @@ class ZaloController:
                     except Exception:
                         pass
                 self._process = None
+            for thread in (self._reader_thread, self._stderr_thread):
+                if thread and thread.is_alive():
+                    thread.join(timeout=1.0)
+            self._reader_thread = None
+            self._stderr_thread = None
+            self._ready_event.clear()
 
     def _read_stderr(self) -> str:
-        if not self._process or not self._process.stderr:
-            return ""
-        try:
-            return self._process.stderr.read(2000)
-        except Exception:
-            return ""
+        """Returns buffered stderr without blocking on a live Node process."""
+        with self._stderr_lock:
+            return "\n".join(self._stderr_lines[-50:])[:4000]
+
+    def _drain_stderr(self):
+        """Continuously drains stderr so diagnostics never deadlock startup."""
+        proc = self._process
+        if not proc or not proc.stderr:
+            return
+        while self._running:
+            try:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                with self._stderr_lock:
+                    self._stderr_lines.append(line.rstrip())
+                    if len(self._stderr_lines) > 200:
+                        del self._stderr_lines[:-200]
+            except Exception as exc:
+                with self._stderr_lock:
+                    self._stderr_lines.append(f"stderr reader failed: {exc}")
+                break
 
     def _read_stdout(self):
         while self._running and self._process and self._process.stdout:
@@ -213,13 +251,16 @@ class ZaloController:
                         if rid in self._pending:
                             self._pending[rid] = msg
                 elif msg.get("type") == "event" and msg.get("event") in _CONSUMED_EVENTS:
+                    if msg.get("event") == "ready":
+                        self._ready_event.set()
                     with self._events_lock:
                         self._events.append(msg)
                         if len(self._events) > _MAX_EVENTS:
                             del self._events[:len(self._events) - _MAX_EVENTS]
             except (json.JSONDecodeError, ValueError):
                 continue
-            except Exception:
+            except Exception as exc:
+                self._reader_error = f"stdout reader failed: {exc}"
                 break
 
     # --- Command / Event primitives ---

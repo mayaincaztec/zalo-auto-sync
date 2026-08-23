@@ -75,7 +75,10 @@ class TestSyncEngine(unittest.TestCase):
         self.config = ConfigManager(os.path.join(self.test_dir, "config.json"))
         self.config.update_all({
             "group_name": "LOIMINH",
-            "check_interval": 5,
+            "group_names": ["LOIMINH"],
+            "auto_schedule_mode": "interval",
+            "auto_interval_hours": 1,
+            "check_interval": 3600,
             "download_folder": self.download_dir,
             "download_timeout": 30,
             "duplicate_action": "rename",
@@ -155,10 +158,10 @@ class TestSyncEngine(unittest.TestCase):
                 self.assertEqual(self.engine._in_schedule_window(), expected)
 
     def test_run_single_scan_requires_group(self):
-        self.config.set("group_name", "")
+        self.config.update_all({"group_name": "", "group_names": []})
         self.engine.run_single_scan()
         self.zc.ensure_zalo_running.assert_not_called()
-        self.assertTrue(self._has_log("No Zalo group name"))
+        self.assertTrue(self._has_log("No Zalo groups"))
 
     def test_run_single_scan_requires_download_folder(self):
         self.config.set("download_folder", "")
@@ -177,6 +180,27 @@ class TestSyncEngine(unittest.TestCase):
         with patch.object(self.engine, "_scan_single_group") as scan:
             self.engine.run_single_scan()
         scan.assert_called_once_with("LOIMINH", self.download_dir, 30)
+
+    def test_run_single_scan_scans_all_selected_groups(self):
+        self.config.set("group_names", ["Nhóm A", "Nhóm B", "Nhóm C"])
+        self.zc.ensure_zalo_running.return_value = True
+        with patch.object(self.engine, "_scan_single_group") as scan:
+            self.engine.run_single_scan()
+        self.zc.ensure_zalo_running.assert_called_once()
+        self.assertEqual(
+            [call.args[0] for call in scan.call_args_list],
+            ["Nhóm A", "Nhóm B", "Nhóm C"],
+        )
+
+    def test_seconds_until_next_daily_run_same_day(self):
+        self.config.update_all({"auto_schedule_mode": "daily", "daily_times": ["09:00", "18:00"]})
+        now = datetime(2026, 1, 1, 8, 30)
+        self.assertEqual(self.engine._seconds_until_next_daily_run(now), 30 * 60)
+
+    def test_seconds_until_next_daily_run_rolls_to_tomorrow(self):
+        self.config.update_all({"auto_schedule_mode": "daily", "daily_times": ["09:00", "18:00"]})
+        now = datetime(2026, 1, 1, 19, 0)
+        self.assertEqual(self.engine._seconds_until_next_daily_run(now), 14 * 60 * 60)
 
     def test_scan_open_group_failure(self):
         self.zc.open_group.return_value = False
@@ -283,11 +307,10 @@ class TestSyncEngine(unittest.TestCase):
         self.assertTrue(self._has_log("already processed"))
 
     def test_sync_loop_logs_scan_exception(self):
-        with patch("zalo_drive_sync.core.sync_engine.time.sleep"):
-            with patch.object(self.engine, "run_single_scan", side_effect=RuntimeError("boom")):
-                self.engine.start()
-                time.sleep(0.05)
-                self.engine.stop()
+        with patch.object(self.engine, "run_single_scan", side_effect=RuntimeError("boom")):
+            self.engine.start()
+            time.sleep(0.05)
+            self.engine.stop()
         self.assertTrue(self._has_log("Error during group scan"))
 
 

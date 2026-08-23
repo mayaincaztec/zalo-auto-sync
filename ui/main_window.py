@@ -414,7 +414,7 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
             self.start_sync()
 
     def start_sync(self):
-        group_name = self.config_manager.group_name
+        group_names = self.config_manager.group_names
         download_folder = self.config_manager.download_folder
 
         if not download_folder:
@@ -422,12 +422,13 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
             self.tabs.setCurrentIndex(1)
             return
 
-        if not group_name:
+        if not group_names:
             QMessageBox.warning(self, _["missing_group_title"], _["missing_group_msg"])
             self.tabs.setCurrentIndex(1)
             return
 
-        self.emit_log("INFO", _["log_initializing"].format(group_name))
+        group_summary = ", ".join(group_names)
+        self.emit_log("INFO", _["log_initializing"].format(group_summary))
 
         self._completed_count = 0
 
@@ -450,7 +451,7 @@ class MainWindow(QMainWindow if PYSIDE_AVAILABLE else object):
         self.btn_toggle_sync.style().unpolish(self.btn_toggle_sync)
         self.btn_toggle_sync.style().polish(self.btn_toggle_sync)
         self.tray_icon.update_sync_state(True)
-        self.tray_icon.notify(_["tray_sync_active"], _["tray_sync_msg"].format(group_name))
+        self.tray_icon.notify(_["tray_sync_active"], _["tray_sync_msg"].format(group_summary))
 
     def stop_sync(self):
         if hasattr(self, 'sync_engine') and self.sync_engine:

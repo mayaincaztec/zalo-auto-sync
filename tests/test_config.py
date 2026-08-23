@@ -31,7 +31,10 @@ class TestConfigManager(unittest.TestCase):
     def test_default_config_creation(self):
         cfg = ConfigManager(self.config_file)
         self.assertTrue(os.path.exists(self.config_file))
-        self.assertEqual(cfg.check_interval, 5)
+        self.assertEqual(cfg.check_interval, 3600)
+        self.assertEqual(cfg.auto_interval_hours, 1)
+        self.assertEqual(cfg.auto_schedule_mode, "interval")
+        self.assertEqual(cfg.daily_times, ["08:00"])
         self.assertEqual(cfg.max_retry, 3)
         self.assertEqual(cfg.group_name, "Team Alpha Workgroup")
 
@@ -68,8 +71,14 @@ class TestConfigManager(unittest.TestCase):
 
     def test_group_names_empty(self):
         cfg = ConfigManager(self.config_file)
-        cfg.set("group_name", "")
+        cfg.update_all({"group_name": "", "group_names": []})
         self.assertEqual(cfg.group_names, [])
+
+    def test_group_names_support_multiple_unique_values(self):
+        cfg = ConfigManager(self.config_file)
+        cfg.set("group_names", ["Nhóm A", " Nhóm B ", "Nhóm A", ""])
+        self.assertEqual(cfg.group_names, ["Nhóm A", "Nhóm B"])
+        self.assertEqual(cfg.group_name, "Nhóm A")
 
     def test_properties_fall_back_to_defaults(self):
         cfg = ConfigManager(self.config_file)
@@ -84,7 +93,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(cfg.schedule_start, "22:00")
         self.assertEqual(cfg.schedule_end, "06:00")
         self.assertEqual(cfg.thread_number, 2)
-        self.assertEqual(cfg.interval, 5)  # alias for check_interval
+        self.assertEqual(cfg.interval, 3600)  # alias for automatic interval
         self.assertEqual(cfg.extensions, [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".zip", ".rar", ".mp4", ".txt"])
         self.assertEqual(cfg.group_name, "Team Alpha Workgroup")
         self.assertEqual(cfg.max_retry, 3)
@@ -92,11 +101,11 @@ class TestConfigManager(unittest.TestCase):
     def test_int_coercion_for_numeric_properties(self):
         cfg = ConfigManager(self.config_file)
         cfg.set("download_timeout", "45")
-        cfg.set("check_interval", "7")
+        cfg.set("auto_interval_hours", "3")
         cfg.set("max_retry", "2")
         cfg.set("thread_number", "4")
         self.assertEqual(cfg.download_timeout, 45)
-        self.assertEqual(cfg.check_interval, 7)
+        self.assertEqual(cfg.check_interval, 10800)
         self.assertEqual(cfg.max_retry, 2)
         self.assertEqual(cfg.thread_number, 4)
 
@@ -126,8 +135,28 @@ class TestConfigManager(unittest.TestCase):
             f.write("{ this is not valid json !!!")
         cfg = ConfigManager(self.config_file)
         cfg.load()
-        self.assertEqual(cfg.check_interval, 5)
+        self.assertEqual(cfg.check_interval, 3600)
         self.assertEqual(cfg.group_name, "Team Alpha Workgroup")
+
+    def test_daily_schedule_values_are_normalized_and_limited(self):
+        cfg = ConfigManager(self.config_file)
+        cfg.update_all({
+            "auto_schedule_mode": "daily",
+            "daily_times": ["9:05", "18:30", "09:05", "23:59", "25:00"],
+        })
+        self.assertEqual(cfg.auto_schedule_mode, "daily")
+        self.assertEqual(cfg.daily_times, ["09:05", "18:30", "23:59"])
+
+    def test_invalid_schedule_values_fall_back_safely(self):
+        cfg = ConfigManager(self.config_file)
+        cfg.update_all({
+            "auto_schedule_mode": "unknown",
+            "auto_interval_hours": 2,
+            "daily_times": ["bad"],
+        })
+        self.assertEqual(cfg.auto_schedule_mode, "interval")
+        self.assertEqual(cfg.auto_interval_hours, 1)
+        self.assertEqual(cfg.daily_times, ["08:00"])
 
     def test_save_returns_false_on_failure(self):
         cfg = ConfigManager(self.config_file)

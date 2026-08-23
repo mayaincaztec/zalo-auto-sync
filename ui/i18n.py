@@ -1,6 +1,6 @@
 _TR = {
     # Main window
-    "window_title": "Zalo PC Auto Download - T\u1ea3i file v\u1ec1 SharePoint v1.2",
+    "window_title": "Zalo PC Auto Download - T\u1ea3i file v\u1ec1 SharePoint v1.3",
     "title_label": "Zalo PC Auto Download",
     "brand_subtitle": "T\u1ea3i t\u1ef1 \u0111\u1ed9ng file nh\xf3m Zalo v\u1ec1 th\u01b0 m\u1ee5c OneDrive / SharePoint",
     "sync_stopped": "\u25cf \u0110\xe3 d\u1eebng",
@@ -33,7 +33,7 @@ _TR = {
     "missing_folder_title": "Thi\u1ebfu th\u01b0 m\u1ee5c l\u01b0u file",
     "missing_folder_msg": "Vui l\xf2ng ch\u1ecdn th\u01b0 m\u1ee5c local ho\u1eb7c SharePoint trong C\xe0i \u0111\u1eb7t.",
     "missing_group_title": "Thi\u1ebfu nh\xf3m Zalo",
-    "missing_group_msg": "Vui l\xf2ng nh\u1eadp t\xean nh\xf3m Zalo trong C\xe0i \u0111\u1eb7t.",
+    "missing_group_msg": "Vui l\xf2ng ch\u1ecdn \xedt nh\u1ea5t m\u1ed9t nh\xf3m Zalo trong C\xe0i \u0111\u1eb7t.",
     "log_stopped_sync": "\u0110\xe3 d\u1eebng t\u1ef1 \u0111\u1ed9ng t\u1ea3i file nh\xf3m Zalo.",
     "log_initializing": "\u0110ang kh\u1edfi t\u1ea1o c\xf4ng c\u1ee5 t\u1ea3i file cho nh\xf3m '{0}'...",
     "log_settings_restart": "\u0110\xe3 c\u1eadp nh\u1eadt c\xe0i \u0111\u1eb7t. \u0110ang kh\u1edfi \u0111\u1ed9ng l\u1ea1i...",
@@ -62,8 +62,12 @@ _TR = {
 
     # Settings
     "settings_zalo_group": "Nh\xf3m Zalo & Th\u01b0 m\u1ee5c l\u01b0u",
-    "settings_group_name": "T\xean nh\xf3m Zalo:",
-    "settings_group_placeholder": "V\xed d\u1ee5: Nh\xf3m c\xf4ng vi\u1ec7c",
+    "settings_group_name": "C\xe1c nh\xf3m Zalo c\u1ea7n t\u1ea3i:",
+    "settings_group_placeholder": "Nh\u1eadp t\xean nh\xf3m n\u1ebfu c\u1ea7n th\xeam th\u1ee7 c\xf4ng",
+    "settings_group_add": "Th\xeam nh\xf3m",
+    "settings_group_select_all": "Ch\u1ecdn t\u1ea5t c\u1ea3",
+    "settings_group_clear": "B\u1ecf ch\u1ecdn",
+    "settings_group_selected_count": "\u0110\xe3 ch\u1ecdn {0} nh\xf3m",
     "settings_group_load": "T\u1ea3i danh s\xe1ch nh\xf3m",
     "settings_group_loading": "\u0110ang t\u1ea3i danh s\xe1ch nh\xf3m...",
     "settings_group_empty": "Ch\u01b0a c\xf3 nh\xf3m. H\xe3y b\u1ea5m \u201cT\u1ea3i danh s\xe1ch nh\xf3m\u201d.",
@@ -82,8 +86,8 @@ _TR = {
     "settings_extensions": "\u0110u\xf4i t\u1eadp tin cho ph\xe9p:",
     "settings_ext_placeholder": ".pdf, .docx, .xlsx, .png, .jpg, .zip",
     "settings_duplicate": "Chi\u1ebfn l\u01b0\u1ee3c file tr\xf9ng:",
-    "settings_perf": "Chu k\u1ef3 & Khay h\u1ec7 th\u1ed1ng",
-    "settings_interval": "Chu k\xec ki\u1ec3m tra:",
+    "settings_perf": "Kh\u1edfi \u0111\u1ed9ng c\xf9ng h\u1ec7 th\u1ed1ng",
+    "settings_interval": "L\u1eb7p l\u1ea1i sau:",
     "settings_threads": "S\u1ed1 lu\u1ed3ng t\u1ea3i l\xean:",
     "settings_retries": "S\u1ed1 l\u1ea7n th\u1eed l\u1ea1i:",
     "settings_auto_start": "Ch\u1ea1y c\xf9ng Windows",
@@ -91,11 +95,12 @@ _TR = {
 
     # Schedule settings
     "settings_schedule_group": "L\u1ecbch t\u1ef1 \u0111\u1ed9ng t\u1ea3i",
-    "settings_schedule_enable": "B\u1eadt l\u1ecbch bi\u1ec3u",
-    "settings_schedule_start": "Gi\u1edd b\u1eaft \u0111\u1ea7u:",
-    "settings_schedule_end": "Gi\u1edd k\u1ebft th\xfac:",
-    "settings_schedule_desc": "Ch\u1ec9 t\u1ea3i file trong khung gi\u1edd n\xe0y. Ngo\xe0i khung gi\u1edd, \u1ee9ng d\u1ee5ng s\u1ebd t\u1ea1m d\u1eebng.",
-    "settings_schedule_always": "Lu\xf4n ch\u1ea1y",
+    "settings_schedule_mode": "Ki\u1ec3u l\u1ecbch:",
+    "settings_schedule_interval": "Theo kho\u1ea3ng th\u1eddi gian",
+    "settings_schedule_daily": "Gi\u1edd c\u1ed1 \u0111\u1ecbnh h\u1eb1ng ng\xe0y",
+    "settings_schedule_daily_times": "C\xe1c m\u1ed1c gi\u1edd:",
+    "settings_schedule_desc": "Ch\u1ebf \u0111\u1ed9 kho\u1ea3ng th\u1eddi gian ch\u1ea1y ngay khi b\u1eaft \u0111\u1ea7u, sau \u0111\xf3 l\u1eb7p l\u1ea1i m\u1ed7i 1/3/6/12 gi\u1edd. Ch\u1ebf \u0111\u1ed9 h\u1eb1ng ng\xe0y cho ph\xe9p ch\u1ecdn t\u1ed1i \u0111a 3 m\u1ed1c gi\u1edd.",
+    "hours_suffix": " gi\u1edd",
 
     # Export / Import
     "settings_export_group": "Sao l\u01b0u & Kh\xf4i ph\u1ee5c",

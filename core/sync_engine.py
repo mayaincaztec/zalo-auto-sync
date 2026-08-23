@@ -12,8 +12,7 @@ is intentionally delegated to the OneDrive desktop client.
 import logging
 import os
 import threading
-import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 from zalo_drive_sync.config.config_manager import ConfigManager
@@ -56,7 +55,7 @@ def resolve_local_destination(
 
 
 class ZaloGroupSyncEngine:
-    """Scans one Zalo group and downloads new files to a local folder."""
+    """Scans selected Zalo groups and downloads new files to a local folder."""
 
     def __init__(
         self,
@@ -165,17 +164,13 @@ class ZaloGroupSyncEngine:
             return True
 
     def run_single_scan(self):
-        """Runs one Zalo scan and downloads new files locally."""
-        if not self._in_schedule_window():
-            self.log("DEBUG", "[Schedule] Outside scheduled window, skipping scan.")
-            return
-
-        group_name = self.config_manager.group_name
+        """Runs one scan across every selected Zalo group."""
+        group_names = self.config_manager.group_names
         download_folder = self.config_manager.download_folder
         download_timeout = self.config_manager.download_timeout
 
-        if not group_name:
-            self.log("ERROR", "[Config] No Zalo group name configured.")
+        if not group_names:
+            self.log("ERROR", "[Config] No Zalo groups configured.")
             return
         if not download_folder:
             self.log("ERROR", "[Config] No local download folder configured.")
@@ -190,7 +185,24 @@ class ZaloGroupSyncEngine:
             self.log("ERROR", "[Open Zalo] Could not connect to Zalo PC instance.")
             return
 
-        self._scan_single_group(group_name, download_folder, download_timeout)
+        self.log("INFO", f"[Groups] Scanning {len(group_names)} selected group(s).")
+        for group_name in group_names:
+            if self._stop_event.is_set():
+                break
+            self._scan_single_group(group_name, download_folder, download_timeout)
+
+    def _seconds_until_next_daily_run(self, now: Optional[datetime] = None) -> float:
+        """Returns seconds until the next configured daily run (1-3 times)."""
+        current = now or datetime.now()
+        candidates = []
+        for text in self.config_manager.daily_times:
+            hour, minute = map(int, text.split(":"))
+            candidate = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate <= current:
+                candidate += timedelta(days=1)
+            candidates.append(candidate)
+        next_run = min(candidates)
+        return max(1.0, (next_run - current).total_seconds())
 
     def _record_skipped(
         self,
@@ -351,13 +363,21 @@ class ZaloGroupSyncEngine:
 
     def _sync_loop(self):
         while self.is_running and not self._stop_event.is_set():
+            mode = self.config_manager.auto_schedule_mode
+            if mode == "daily":
+                wait_seconds = self._seconds_until_next_daily_run()
+                next_minutes = max(1, int(round(wait_seconds / 60)))
+                self.log("INFO", f"[Schedule] Next daily scan in about {next_minutes} minute(s).")
+                if self._stop_event.wait(wait_seconds):
+                    break
+
             try:
                 self.run_single_scan()
             except Exception as exc:
                 self.log("ERROR", f"[Download Engine] Error during group scan: {exc}")
 
-            interval = max(1, self.config_manager.check_interval)
-            slept = 0
-            while slept < interval and self.is_running and not self._stop_event.is_set():
-                time.sleep(1)
-                slept += 1
+            if mode == "interval":
+                interval = max(1, self.config_manager.check_interval)
+                self.log("INFO", f"[Schedule] Next scan in {self.config_manager.auto_interval_hours} hour(s).")
+                if self._stop_event.wait(interval):
+                    break

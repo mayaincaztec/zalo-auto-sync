@@ -11,7 +11,11 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "group_name": "Team Alpha Workgroup",
-    "check_interval": 5,
+    "group_names": [],
+    "check_interval": 3600,
+    "auto_schedule_mode": "interval",
+    "auto_interval_hours": 1,
+    "daily_times": ["08:00"],
     "download_folder": os.path.expanduser("~/Documents/Zalo Received Files"),
     "download_timeout": 300,
     "extensions": [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".zip", ".rar", ".mp4", ".txt"],
@@ -98,13 +102,57 @@ class ConfigManager:
 
     @property
     def group_name(self) -> str:
-        return self.get("group_name", DEFAULT_CONFIG["group_name"])
+        """Compatibility alias for callers that still expect one group."""
+        names = self.group_names
+        if names:
+            return names[0]
+        return str(self.get("group_name", DEFAULT_CONFIG["group_name"])).strip()
 
     @property
     def group_names(self) -> List[str]:
-        """Compatibility property: single group wrapped in a list."""
-        name = self.group_name
-        return [name] if name else []
+        """Returns the selected Zalo groups, migrating the legacy single value."""
+        raw_names = self.get("group_names", [])
+        result: List[str] = []
+        if isinstance(raw_names, list):
+            for value in raw_names:
+                name = str(value).strip()
+                if name and name not in result:
+                    result.append(name)
+        if result:
+            return result
+        legacy_name = str(self.get("group_name", DEFAULT_CONFIG["group_name"])).strip()
+        return [legacy_name] if legacy_name else []
+
+    @property
+    def auto_schedule_mode(self) -> str:
+        mode = str(self.get("auto_schedule_mode", "interval")).strip().lower()
+        return mode if mode in {"interval", "daily"} else "interval"
+
+    @property
+    def auto_interval_hours(self) -> int:
+        try:
+            value = int(self.get("auto_interval_hours", 1))
+        except (TypeError, ValueError):
+            value = 1
+        return value if value in {1, 3, 6, 12} else 1
+
+    @property
+    def daily_times(self) -> List[str]:
+        raw_times = self.get("daily_times", ["08:00"])
+        if not isinstance(raw_times, list):
+            raw_times = []
+        result: List[str] = []
+        for value in raw_times:
+            text = str(value).strip()
+            try:
+                hour, minute = map(int, text.split(":"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                normalized = f"{hour:02d}:{minute:02d}"
+                if normalized not in result:
+                    result.append(normalized)
+        return sorted(result)[:3] or ["08:00"]
 
     @property
     def schedule_enabled(self) -> bool:
@@ -132,7 +180,12 @@ class ConfigManager:
 
     @property
     def check_interval(self) -> int:
-        return int(self.get("check_interval", 5))
+        if self.auto_schedule_mode == "interval":
+            return self.auto_interval_hours * 3600
+        try:
+            return max(1, int(self.get("check_interval", 3600)))
+        except (TypeError, ValueError):
+            return 3600
 
     @property
     def interval(self) -> int:

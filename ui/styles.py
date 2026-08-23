@@ -32,7 +32,7 @@ QGroupBox::title {
     color: #38BDF8;
 }
 
-QLineEdit, QSpinBox, QComboBox {
+QLineEdit, QSpinBox, QComboBox, QTimeEdit, QListWidget {
     background-color: #0F172A;
     border: 1px solid #334155;
     border-radius: 6px;
@@ -41,7 +41,7 @@ QLineEdit, QSpinBox, QComboBox {
     selection-background-color: #0284C7;
 }
 
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTimeEdit:focus, QListWidget:focus {
     border: 1px solid #38BDF8;
 }
 
@@ -61,6 +61,20 @@ QComboBox QAbstractItemView::item {
 
 QComboBox QAbstractItemView::item:hover {
     background-color: #1E293B;
+}
+
+QListWidget::item {
+    padding: 5px 8px;
+    border-radius: 4px;
+}
+
+QListWidget::item:hover {
+    background-color: #1E293B;
+}
+
+QListWidget::item:selected {
+    background-color: #0C4A6E;
+    color: #FFFFFF;
 }
 
 QPushButton {

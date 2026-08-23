@@ -861,7 +861,8 @@ class TestZaloController(unittest.TestCase):
         ctrl = ZaloController()
         mock_popen.return_value.poll.return_value = None
         with patch.object(ctrl, "_read_stdout"), \
-             patch.object(ctrl, "_wait_for_event", return_value={"event": "ready"}):
+             patch.object(ctrl, "_drain_stderr"), \
+             patch.object(ctrl._ready_event, "wait", return_value=True):
             self.assertTrue(ctrl._start_bridge_locked())
         self.assertTrue(ctrl._running)
         self.assertIsNotNone(ctrl._process)
@@ -871,9 +872,12 @@ class TestZaloController(unittest.TestCase):
         ctrl = ZaloController()
         mock_popen.return_value.poll.return_value = None
         with patch.object(ctrl, "_read_stdout"), \
-             patch.object(ctrl, "_wait_for_event", return_value=None), \
-             patch.object(ctrl, "_read_stderr", return_value="boom"):
+             patch.object(ctrl, "_drain_stderr"), \
+             patch.object(ctrl._ready_event, "wait", return_value=False), \
+             patch.object(ctrl, "_read_stderr", return_value="boom"), \
+             patch.object(ctrl, "_stop_bridge") as mock_stop:
             self.assertFalse(ctrl._start_bridge_locked())
+        mock_stop.assert_called_once()
         self.assertFalse(ctrl.is_connected)
 
     def test_start_bridge_locked_popen_exception(self):
@@ -928,17 +932,21 @@ class TestZaloController(unittest.TestCase):
 
     def test_read_stderr_with_process(self):
         ctrl = ZaloController()
-        proc = MagicMock()
-        proc.stderr = io.StringIO("some error")
-        ctrl._process = proc
+        ctrl._stderr_lines = ["some error"]
         self.assertEqual(ctrl._read_stderr(), "some error")
 
     def test_read_stderr_read_raises_returns_empty(self):
         ctrl = ZaloController()
-        proc = MagicMock()
-        proc.stderr.read.side_effect = OSError("gone")
-        ctrl._process = proc
         self.assertEqual(ctrl._read_stderr(), "")
+
+    def test_drain_stderr_buffers_lines(self):
+        ctrl = ZaloController()
+        ctrl._running = True
+        proc = MagicMock()
+        proc.stderr.readline.side_effect = ["warning one\n", "warning two\n", ""]
+        ctrl._process = proc
+        ctrl._drain_stderr()
+        self.assertEqual(ctrl._read_stderr(), "warning one\nwarning two")
 
     def test_read_stdout_routes_response_and_event(self):
         ctrl = ZaloController()
@@ -956,6 +964,18 @@ class TestZaloController(unittest.TestCase):
         ctrl._read_stdout()
         self.assertEqual(ctrl._pending["7"]["status"], "ok")
         self.assertTrue(any(e.get("event") == "qrcode" for e in ctrl._events))
+
+    def test_read_stdout_sets_ready_event(self):
+        ctrl = ZaloController()
+        ctrl._running = True
+        proc = MagicMock()
+        proc.stdout.readline.side_effect = [
+            '{"type": "event", "event": "ready", "data": {}}',
+            "",
+        ]
+        ctrl._process = proc
+        ctrl._read_stdout()
+        self.assertTrue(ctrl._ready_event.is_set())
 
     def test_read_stdout_skips_blank_and_unknown(self):
         ctrl = ZaloController()

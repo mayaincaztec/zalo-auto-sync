@@ -26,7 +26,7 @@ code { background: #1E293B; border: 1px solid #334155; border-radius: 4px; paddi
 
 <h1>Hướng dẫn tải file Zalo về SharePoint</h1>
 
-<p>Ứng dụng phát hiện file mới trong nhóm Zalo và tải thẳng vào thư mục
+<p>Ứng dụng phát hiện file mới trong nhiều nhóm Zalo và tải thẳng vào thư mục
 local bạn chọn. Nếu đó là thư mục đã được OneDrive đồng bộ với SharePoint,
 OneDrive sẽ tự đưa file lên cloud — ứng dụng không cần kết nối Google Drive.</p>
 
@@ -42,7 +42,8 @@ OneDrive sẽ tự đưa file lên cloud — ứng dụng không cần kết n�
 <h3>Bước 2: Chọn nhóm Zalo</h3>
 <ol>
   <li>Bấm <b>Tải danh sách nhóm</b> trong tab Cài đặt.</li>
-  <li>Chọn nhóm cần theo dõi.</li>
+  <li>Đánh dấu một hoặc nhiều nhóm cần theo dõi.</li>
+  <li>Có thể dùng <b>Chọn tất cả</b>, <b>Bỏ chọn</b> hoặc thêm tên nhóm thủ công.</li>
 </ol>
 
 <h3>Bước 3: Chọn thư mục SharePoint/local</h3>
@@ -67,6 +68,8 @@ quản lý. Hãy bảo đảm OneDrive đang đăng nhập và thư mục đích
 
 <h3>Bước 5: Lưu và chạy</h3>
 <ol>
+  <li>Chọn lịch tự động: lặp mỗi <b>1, 3, 6 hoặc 12 giờ</b>; hoặc chọn
+      <b>1–3 mốc giờ cố định hằng ngày</b>.</li>
   <li>Bấm <b>Lưu cài đặt</b>.</li>
   <li>Bấm <b>Tải file mới ngay</b> để quét một lần, hoặc
       <b>Bắt đầu tự động tải</b> để theo dõi định kỳ.</li>
@@ -78,7 +81,7 @@ Kiểm tra trong Command Prompt bằng lệnh <code>node -v</code>.</p>
 
 <div class="version">
 <b>Chế độ:</b> Local / OneDrive / SharePoint folder<br>
-<b>Phiên bản:</b> 1.2
+<b>Phiên bản:</b> 1.3
 </div>
 
 </body></html>
